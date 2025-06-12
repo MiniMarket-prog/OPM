@@ -1,16 +1,16 @@
 "use client"
 
-import { useFormState, useFormStatus } from "react-dom"
+import { useActionState, useEffect } from "react" // Import useActionState from react
+import { useFormStatus } from "react-dom" // Keep useFormStatus from react-dom
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { AlertCircle, CheckCircle2, LogIn } from "lucide-react" // Added LogIn
+import { AlertCircle, CheckCircle2, LogIn } from "lucide-react"
 import Link from "next/link"
 import { login } from "@/app/auth/actions"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card" // Added Card components
-import { useEffect } from "react" // Added useEffect
-import { toast } from "sonner" // Added sonner
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { toast } from "sonner"
 
 interface LoginFormProps {
   ipStatus?: {
@@ -19,7 +19,7 @@ interface LoginFormProps {
   }
 }
 
-// Define the initial state for useFormState
+// Define the initial state for useActionState
 const initialState = {
   error: null,
   success: false,
@@ -27,7 +27,8 @@ const initialState = {
 }
 
 export function LoginForm({ ipStatus }: LoginFormProps) {
-  const [state, formAction] = useFormState(login, initialState)
+  // Using useActionState from React
+  const [state, formAction] = useActionState(login, initialState)
 
   useEffect(() => {
     if (state?.error) {
@@ -35,7 +36,6 @@ export function LoginForm({ ipStatus }: LoginFormProps) {
     }
     // Success messages are tricky with redirects. If the action redirects,
     // the success toast might not be seen. Usually, the redirect itself is the success indicator.
-    // If the action *conditionally* redirects, you might show a toast here.
   }, [state])
 
   return (
@@ -62,15 +62,6 @@ export function LoginForm({ ipStatus }: LoginFormProps) {
             </AlertDescription>
           </Alert>
         )}
-
-        {/* Display server-side validation errors from useFormState, handled by toast now */}
-        {/* {state?.error && (
-          <Alert variant="destructive" className="mb-4">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Login Failed</AlertTitle>
-            <AlertDescription>{state.error}</AlertDescription>
-          </Alert>
-        )} */}
 
         <form action={formAction} className="space-y-4">
           <div>

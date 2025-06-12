@@ -1,25 +1,26 @@
 "use client"
 
 import type React from "react"
-import { useState, useTransition } from "react"
+import { useState, useTransition, useEffect } from "react"
 import type { User, Team } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card"
-import { PlusCircle, Users, Building, KeyRound } from "lucide-react"
+import { Building, KeyRound, Edit3, Users2, Briefcase, UserPlus } from "lucide-react"
 import Link from "next/link"
-import { createTeam, createTeamLeader } from "./actions" // Import the server actions
+import { createTeam, createTeamLeader } from "./actions"
 import { toast } from "sonner"
+import { EditTeamDialog } from "@/components/admin/edit-team-dialog" // New import
 
 interface AdminTeamsClientPageProps {
   initialTeams: Team[]
-  initialUsers: User[]
+  initialUsers: User[] // These are profiles
 }
 
 export function AdminTeamsClientPage({ initialTeams, initialUsers }: AdminTeamsClientPageProps) {
   const [teams, setTeams] = useState<Team[]>(initialTeams)
-  const [users, setUsers] = useState<User[]>(initialUsers)
+  const [users, setUsers] = useState<User[]>(initialUsers) // Profiles
 
   const [newTeamName, setNewTeamName] = useState("")
   const [isTeamPending, startTeamTransition] = useTransition()
@@ -27,8 +28,11 @@ export function AdminTeamsClientPage({ initialTeams, initialUsers }: AdminTeamsC
   const [newTlName, setNewTlName] = useState("")
   const [newTlEmail, setNewTlEmail] = useState("")
   const [newTlPassword, setNewTlPassword] = useState("")
-  const [assignTlToTeamId, setAssignTlToTeamId] = useState<string>(initialTeams[0]?.id || "")
+  const [assignTlToTeamId, setAssignTlToTeamId] = useState<string>(teams[0]?.id || "")
   const [isTlPending, startTlTransition] = useTransition()
+
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [selectedTeamForEdit, setSelectedTeamForEdit] = useState<Team | null>(null)
 
   const handleCreateTeam = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -38,14 +42,14 @@ export function AdminTeamsClientPage({ initialTeams, initialUsers }: AdminTeamsC
       const result = await createTeam(formData)
       if (result?.error) {
         toast.error("Failed to create team", { description: result.error })
-      } else if (result?.success) {
+      } else if (result?.success && result.newTeam) {
         toast.success(result.message || "Team created successfully!")
+        setTeams((prevTeams) => [...prevTeams, result.newTeam!])
         setNewTeamName("")
-        // Optimistically update UI or re-fetch. For now, revalidation will handle it.
-        // To immediately update UI without waiting for revalidation:
-        // const newTeamData = { id: `temp-id-${Date.now()}`, name: formData.get("newTeamName") as string, created_at: new Date().toISOString() };
-        // setTeams(prev => [...prev, newTeamData]);
-        // Then, after revalidatePath, the actual data will replace this.
+        if (teams.length === 0 && result.newTeam) {
+          // If this is the first team, select it for TL assignment
+          setAssignTlToTeamId(result.newTeam.id)
+        }
       }
     })
   }
@@ -58,15 +62,42 @@ export function AdminTeamsClientPage({ initialTeams, initialUsers }: AdminTeamsC
       const result = await createTeamLeader(formData)
       if (result?.error) {
         toast.error("Failed to create Team Leader", { description: result.error })
-      } else if (result?.success) {
+      } else if (result?.success && result.newTeamLeaderProfile) {
         toast.success(result.message || "Team Leader created successfully!")
+        // Add new TL to the users state for immediate UI update
+        const newTlUser: User = {
+          id: result.newTeamLeaderProfile.id,
+          name: result.newTeamLeaderProfile.name || "Unknown TL",
+          email: (formData.get("newTlEmail") as string) || "N/A", // Get email from form as it's not in profile select
+          role: "team-leader",
+          team_id: result.newTeamLeaderProfile.team_id,
+        }
+        setUsers((prevUsers) => [...prevUsers, newTlUser])
         setNewTlName("")
         setNewTlEmail("")
         setNewTlPassword("")
-        // Optimistically update UI or re-fetch
       }
     })
   }
+
+  const handleOpenEditDialog = (team: Team) => {
+    setSelectedTeamForEdit(team)
+    setIsEditDialogOpen(true)
+  }
+
+  const handleTeamUpdated = (updatedTeam: Team) => {
+    setTeams((prevTeams) => prevTeams.map((t) => (t.id === updatedTeam.id ? updatedTeam : t)))
+    // No need to re-fetch, revalidatePath from server action will handle consistency
+  }
+
+  // Update assignTlToTeamId if teams list changes and current selection is invalid
+  useEffect(() => {
+    if (teams.length > 0 && !teams.find((t) => t.id === assignTlToTeamId)) {
+      setAssignTlToTeamId(teams[0].id)
+    } else if (teams.length === 0 && assignTlToTeamId !== "") {
+      setAssignTlToTeamId("")
+    }
+  }, [teams, assignTlToTeamId])
 
   return (
     <div className="container mx-auto p-4 md:p-6">
@@ -84,7 +115,7 @@ export function AdminTeamsClientPage({ initialTeams, initialUsers }: AdminTeamsC
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <PlusCircle className="h-5 w-5 text-green-500" />
+              <Briefcase className="h-5 w-5 text-green-500" /> {/* Changed Icon */}
               Create New Team
             </CardTitle>
           </CardHeader>
@@ -113,7 +144,7 @@ export function AdminTeamsClientPage({ initialTeams, initialUsers }: AdminTeamsC
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-blue-500" />
+              <UserPlus className="h-5 w-5 text-blue-500" /> {/* Changed Icon */}
               Create New Team Leader
             </CardTitle>
             <CardDescription>Assign the new Team Leader to an existing team.</CardDescription>
@@ -174,10 +205,10 @@ export function AdminTeamsClientPage({ initialTeams, initialUsers }: AdminTeamsC
                   onChange={(e) => setAssignTlToTeamId(e.target.value)}
                   className="w-full p-2 border rounded-md bg-background"
                   disabled={isTlPending || teams.length === 0}
-                  required
+                  required={teams.length > 0} // Only required if teams exist
                 >
-                  <option value="" disabled>
-                    Select a team
+                  <option value="" disabled={teams.length > 0}>
+                    {teams.length === 0 ? "No teams available" : "Select a team"}
                   </option>
                   {teams.map((team: Team) => (
                     <option key={team.id} value={team.id}>
@@ -186,7 +217,7 @@ export function AdminTeamsClientPage({ initialTeams, initialUsers }: AdminTeamsC
                   ))}
                 </select>
                 {teams.length === 0 && (
-                  <p className="text-sm text-muted-foreground mt-1">No teams available. Create a team first.</p>
+                  <p className="text-sm text-red-500 mt-1">No teams available. Create a team first to assign a TL.</p>
                 )}
               </div>
               <Button type="submit" disabled={isTlPending || teams.length === 0}>
@@ -199,7 +230,10 @@ export function AdminTeamsClientPage({ initialTeams, initialUsers }: AdminTeamsC
 
       <Card className="mt-8">
         <CardHeader>
-          <CardTitle>Existing Teams & Members</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Users2 className="h-5 w-5" /> {/* Changed Icon */}
+            Existing Teams & Members
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {teams.length === 0 ? (
@@ -208,36 +242,45 @@ export function AdminTeamsClientPage({ initialTeams, initialUsers }: AdminTeamsC
             <ul className="space-y-4">
               {teams.map((team: Team) => (
                 <li key={team.id} className="p-4 border rounded-md">
-                  <h3 className="text-lg font-semibold">
-                    {team.name} (ID: {team.id.substring(0, 6)})
-                  </h3>
-                  <div className="ml-4 mt-2">
-                    <h4 className="font-medium">Team Leaders:</h4>
-                    <ul className="list-disc list-inside text-sm">
-                      {users
-                        .filter((u: User) => u.role === "team-leader" && u.team_id === team.id)
-                        .map((tl: User) => (
-                          <li key={tl.id}>
-                            {tl.name} ({tl.email})
-                          </li>
-                        ))}
-                      {users.filter((u: User) => u.role === "team-leader" && u.team_id === team.id).length === 0 && (
-                        <li className="text-muted-foreground">No TLs assigned</li>
-                      )}
-                    </ul>
-                    <h4 className="font-medium mt-2">Mailers:</h4>
-                    <ul className="list-disc list-inside text-sm">
-                      {users
-                        .filter((u: User) => u.role === "mailer" && u.team_id === team.id)
-                        .map((mailer: User) => (
-                          <li key={mailer.id}>
-                            {mailer.name} ({mailer.email})
-                          </li>
-                        ))}
-                      {users.filter((u: User) => u.role === "mailer" && u.team_id === team.id).length === 0 && (
-                        <li className="text-muted-foreground">No Mailers in this team</li>
-                      )}
-                    </ul>
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="text-lg font-semibold">
+                      {team.name} (ID: {team.id.substring(0, 6)})
+                    </h3>
+                    <Button variant="outline" size="sm" onClick={() => handleOpenEditDialog(team)}>
+                      <Edit3 className="mr-2 h-4 w-4" /> Edit Name
+                    </Button>
+                  </div>
+                  <div className="ml-4 mt-2 space-y-2">
+                    <div>
+                      <h4 className="font-medium text-sm">Team Leaders:</h4>
+                      <ul className="list-disc list-inside text-sm pl-2">
+                        {users
+                          .filter((u: User) => u.role === "team-leader" && u.team_id === team.id)
+                          .map((tl: User) => (
+                            <li key={tl.id}>
+                              {tl.name} ({tl.email})
+                            </li>
+                          ))}
+                        {users.filter((u: User) => u.role === "team-leader" && u.team_id === team.id).length === 0 && (
+                          <li className="text-muted-foreground">No TLs assigned</li>
+                        )}
+                      </ul>
+                    </div>
+                    <div>
+                      <h4 className="font-medium text-sm">Mailers:</h4>
+                      <ul className="list-disc list-inside text-sm pl-2">
+                        {users
+                          .filter((u: User) => u.role === "mailer" && u.team_id === team.id)
+                          .map((mailer: User) => (
+                            <li key={mailer.id}>
+                              {mailer.name} ({mailer.email})
+                            </li>
+                          ))}
+                        {users.filter((u: User) => u.role === "mailer" && u.team_id === team.id).length === 0 && (
+                          <li className="text-muted-foreground">No Mailers in this team</li>
+                        )}
+                      </ul>
+                    </div>
                   </div>
                 </li>
               ))}
@@ -245,6 +288,12 @@ export function AdminTeamsClientPage({ initialTeams, initialUsers }: AdminTeamsC
           )}
         </CardContent>
       </Card>
+      <EditTeamDialog
+        team={selectedTeamForEdit}
+        isOpen={isEditDialogOpen}
+        onOpenChange={setIsEditDialogOpen}
+        onTeamUpdated={handleTeamUpdated}
+      />
     </div>
   )
 }

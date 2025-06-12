@@ -97,7 +97,7 @@ export async function createMailer(formData: FormData) {
     return { error: "Mailer user creation did not return a user object." }
   }
 
-  const { error: profileError } = await supabaseAdmin
+  const { data: newMailerProfile, error: profileError } = await supabaseAdmin
     .from("profiles")
     .update({
       role: "mailer",
@@ -105,9 +105,11 @@ export async function createMailer(formData: FormData) {
       name: mailerName,
     })
     .eq("id", authUser.user.id)
+    .select()
+    .single()
 
   if (profileError) {
-    console.error("Error updating profile for new mailer:", profileError)
+    console.error("Error updating profile for new mailer:", profileError.message)
     await supabaseAdmin.auth.admin.deleteUser(authUser.user.id)
     return { error: `Failed to update profile for new mailer: ${profileError.message}` }
   }
@@ -121,5 +123,5 @@ export async function createMailer(formData: FormData) {
 
   revalidatePath("/team-leader/mailers")
   revalidatePath("/admin/teams")
-  return { error: null, success: true, message: "Mailer created successfully!" }
+  return { error: null, success: true, message: "Mailer created successfully!", newMailer: newMailerProfile }
 }

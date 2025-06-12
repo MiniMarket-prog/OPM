@@ -1,193 +1,117 @@
-"use client"
+import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { cookies } from "next/headers"
+import { redirect } from "next/navigation"
+import type { User, UserRole } from "@/lib/types"
+import { TeamLeaderMailersClientPage } from "./mailers-client-page" // New client component
+import type { CookieOptions } from "@supabase/ssr"
 
-import type React from "react"
-import type { User, Team } from "@/lib/types"
-
-import { useState, useTransition } from "react"
-import { useMockDB } from "@/lib/mock-data-store"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card"
-import { UserRoleSimulator } from "@/components/user-role-simulator"
-import { UserPlus, Users, Building, KeyRound } from "lucide-react"
-import Link from "next/link"
-import { createMailer } from "./actions"
-import { toast } from "sonner"
-
-export default function TLMailersPage() {
-  const [db, { getCurrentUser }] = useMockDB()
-  const firstTL = db.users.find((u: User) => u.role === "team-leader")
-  const [selectedUserId, setSelectedUserId] = useState<string>(firstTL?.id || db.users[0]?.id || "")
-  const currentUser = getCurrentUser(selectedUserId)
-
-  const [newMailerName, setNewMailerName] = useState("")
-  const [newMailerEmail, setNewMailerEmail] = useState("")
-  const [newMailerPassword, setNewMailerPassword] = useState("")
-  const [isPending, startTransition] = useTransition()
-
-  if (!currentUser || currentUser.role !== "team-leader" || !currentUser.team_id) {
-    return (
-      <div className="container mx-auto p-4">
-        <UserRoleSimulator
-          currentUser={currentUser}
-          allUsers={db.users}
-          onUserChange={setSelectedUserId}
-          className="mb-4"
-        />
-        <p>Access Denied. You must be a Team Leader with an assigned team to view this page.</p>
-        <Button variant="link" asChild>
-          <Link href="/dashboard">Go to Dashboard</Link>
-        </Button>
-      </div>
-    )
-  }
-  const currentTeam = db.teams.find((t: Team) => t.id === currentUser.team_id)
-
-  const handleCreateMailer = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    if (!newMailerName.trim() || !newMailerEmail.trim() || !newMailerPassword.trim()) {
-      toast.error("Mailer name, email, and password cannot be empty.")
-      return
-    }
-    if (newMailerPassword.trim().length < 6) {
-      toast.error("Password must be at least 6 characters long.")
-      return
-    }
-
-    const formData = new FormData()
-    formData.append("mailerName", newMailerName.trim())
-    formData.append("mailerEmail", newMailerEmail.trim())
-    formData.append("mailerPassword", newMailerPassword.trim())
-    formData.append("teamId", currentUser.team_id!) // team_id is checked in the guard clause
-
-    startTransition(async () => {
-      const result = await createMailer(formData)
-      if (result?.error) {
-        toast.error("Failed to create Mailer", { description: result.error })
-      } else if (result?.success) {
-        toast.success(result.message || "Mailer created successfully!")
-        setNewMailerName("")
-        setNewMailerEmail("")
-        setNewMailerPassword("")
-        // Re-fetching or optimistic update would go here if not relying on revalidatePath
-        // For now, Supabase data will update on next page load or via revalidation
+async function getTeamLeaderPageData() {
+  const cookieStore = await cookies()
+  const supabase = createSupabaseServerClient({
+    get(name: string) {
+      return cookieStore.get(name)?.value
+    },
+    set(name: string, value: string, options: CookieOptions) {
+      try {
+        cookieStore.set({ name, value, ...options })
+      } catch (error) {
+        /* Ignored */
       }
-    })
+    },
+    remove(name: string, options: CookieOptions) {
+      try {
+        cookieStore.set({ name, value: "", ...options })
+      } catch (error) {
+        /* Ignored */
+      }
+    },
+  })
+
+  const {
+    data: { user: authUser },
+    error: authError,
+  } = await supabase.auth.getUser()
+
+  if (authError || !authUser) {
+    redirect("/login")
   }
 
-  // This part still uses mockDB for display.
-  // A full solution would fetch this from Supabase or update via revalidation.
-  const mailersInTeam = db.users.filter((u: User) => u.role === "mailer" && u.team_id === currentUser.team_id)
+  const { data: profileData, error: profileError } = await supabase
+    .from("profiles")
+    .select("*, teams!fk_profiles_team_id(id, name)") // Disambiguate the relationship
+    .eq("id", authUser.id)
+    .single()
 
+  if (profileError || !profileData) {
+    console.error("Error fetching TL profile or profile not found:", profileError)
+    redirect("/dashboard") // Or an error page
+  }
+
+  const currentUser = {
+    id: profileData.id,
+    name: profileData.name || "User",
+    email: authUser.email,
+    role: profileData.role as UserRole,
+    team_id: profileData.team_id,
+    avatar_url: profileData.avatar_url,
+    // teams: profileData.teams as Team | null // Supabase types might make this an object or null
+  }
+
+  if (currentUser.role !== "team-leader" || !currentUser.team_id) {
+    // This check is now server-side, more reliable
+    redirect("/dashboard") // Or a specific access-denied page
+  }
+
+  // The type of profileData.teams will be an object or null, not an array, because it's a to-one relationship.
+  const teamName = profileData.teams?.name || "Unknown Team"
+
+  const { data: teamMailersData, error: mailersError } = await supabase
+    .from("profiles")
+    .select("id, name, email, role, team_id")
+    .eq("role", "mailer")
+    .eq("team_id", currentUser.team_id)
+
+  if (mailersError) {
+    console.error("Error fetching team mailers:", mailersError)
+    // Handle error, maybe return empty array or show error message
+  }
+
+  const { data: allUsersData, error: allUsersError } = await supabase
+    .from("profiles")
+    .select("id, name, email, role, team_id, avatar_url")
+
+  if (allUsersError) {
+    console.error("Error fetching all users for simulator:", allUsersError)
+  }
+
+  const allUsersForSimulator: User[] = (allUsersData || []).map((p) => ({
+    id: p.id,
+    name: p.name || "User",
+    email: p.email || undefined,
+    role: p.role as UserRole,
+    team_id: p.team_id || undefined,
+    avatar_url: p.avatar_url || undefined,
+  }))
+
+  return {
+    currentUser,
+    teamName,
+    initialTeamMailers: (teamMailersData as User[]) || [],
+    allUsersForSimulator,
+  }
+}
+
+export default async function TeamLeaderMailersPage() {
+  const { currentUser, teamName, initialTeamMailers, allUsersForSimulator } = await getTeamLeaderPageData()
+
+  // The server-side check already handles redirection if not a TL or no team.
+  // So, we can directly render the client page.
   return (
-    <div className="container mx-auto p-4 md:p-6">
-      <UserRoleSimulator
-        currentUser={currentUser}
-        allUsers={db.users}
-        onUserChange={setSelectedUserId}
-        className="mb-6"
-      />
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold">Manage Mailers for Team: {currentTeam?.name || "N/A"}</h1>
-        <Button variant="outline" asChild>
-          <Link href="/dashboard">
-            <Building className="mr-2 h-4 w-4" />
-            Dashboard
-          </Link>
-        </Button>
-      </div>
-
-      <div className="grid md:grid-cols-2 gap-8">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <UserPlus className="h-5 w-5 text-green-500" />
-              Create New Mailer
-            </CardTitle>
-            <CardDescription>Add a new mailer to your team: {currentTeam?.name || "N/A"}.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleCreateMailer} className="space-y-4">
-              <div>
-                <Label htmlFor="newMailerName">Mailer Name</Label>
-                <Input
-                  id="newMailerName"
-                  name="newMailerName"
-                  type="text"
-                  value={newMailerName}
-                  onChange={(e) => setNewMailerName(e.target.value)}
-                  placeholder="e.g., Bob The Mailer"
-                  disabled={isPending}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="newMailerEmail">Mailer Email</Label>
-                <Input
-                  id="newMailerEmail"
-                  name="newMailerEmail"
-                  type="email"
-                  value={newMailerEmail}
-                  onChange={(e) => setNewMailerEmail(e.target.value)}
-                  placeholder="e.g., bob@example.com"
-                  disabled={isPending}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="newMailerPassword" className="flex items-center gap-1">
-                  <KeyRound className="h-4 w-4" /> Temporary Password
-                </Label>
-                <Input
-                  id="newMailerPassword"
-                  name="newMailerPassword"
-                  type="password"
-                  value={newMailerPassword}
-                  onChange={(e) => setNewMailerPassword(e.target.value)}
-                  placeholder="Min. 6 characters"
-                  disabled={isPending}
-                  required
-                  minLength={6}
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  The new Mailer should change this password upon first login.
-                </p>
-              </div>
-              <Button type="submit" disabled={isPending}>
-                {isPending ? "Creating Mailer..." : "Create Mailer"}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-blue-500" />
-              Mailers in Your Team
-            </CardTitle>
-            <CardDescription>Total Mailers: {mailersInTeam.length}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {mailersInTeam.length === 0 ? (
-              <p>No mailers created in this team yet. (Display uses mock data for now)</p>
-            ) : (
-              <ul className="space-y-2">
-                {mailersInTeam.map((mailer: User) => (
-                  <li key={mailer.id} className="p-2 border rounded-md text-sm">
-                    {mailer.name} ({mailer.email})
-                  </li>
-                ))}
-              </ul>
-            )}
-            <p className="text-xs text-muted-foreground mt-2">
-              Note: This list currently uses mock data and will update fully upon page refresh after a mailer is created
-              with the new system.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+    <TeamLeaderMailersClientPage
+      currentUser={currentUser}
+      teamName={teamName}
+      initialTeamMailers={initialTeamMailers}
+      allUsersForSimulator={allUsersForSimulator}
+    />
   )
 }
