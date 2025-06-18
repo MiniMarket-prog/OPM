@@ -1,5 +1,5 @@
 import type React from "react"
-import { Header } from "./header"
+import Header from "./header"
 
 export default async function DashboardLayout({
   children,

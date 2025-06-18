@@ -2,11 +2,16 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { revalidatePath } from "next/cache"
-import { cookies, headers as nextHeaders } from "next/headers"
 import { redirect } from "next/navigation"
-import type { CookieOptions } from "@supabase/ssr"
 import { createClient } from "@supabase/supabase-js"
 import type { Database } from "@/lib/database.types"
+import type { User, UserRole, ActionResult, Gender } from "@/lib/types"
+
+// Define the state for the login action
+interface LoginState extends ActionResult {
+  // Inherit success, message, error from ActionResult
+  // Add any specific state for login if needed
+}
 
 // Helper to get a Supabase client with service_role key for admin actions
 function createSupabaseAdminClient() {
@@ -21,188 +26,153 @@ function createSupabaseAdminClient() {
   })
 }
 
-export async function signOut() {
-  const cookieStore = await cookies()
-  const supabase = createSupabaseServerClient({
-    get(name: string) {
-      return cookieStore.get(name)?.value
-    },
-    set(name: string, value: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value, ...options })
-      } catch (error) {
-        /* Ignored */
-      }
-    },
-    remove(name: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value: "", ...options })
-      } catch (error) {
-        /* Ignored */
-      }
+export async function signIn(prevState: LoginState | undefined, formData: FormData): Promise<LoginState> {
+  const email = formData.get("email") as string
+  const password = formData.get("password") as string
+
+  if (!email || !password) {
+    return { success: false, message: "Email and password are required.", error: "Email and password are required." }
+  }
+
+  const supabase = await createSupabaseServerClient()
+
+  const { error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  })
+
+  if (error) {
+    console.error("Sign-in error:", error.message)
+    return {
+      success: false,
+      message: error.message || "Could not authenticate user",
+      error: error.message || "Could not authenticate user",
+    }
+  }
+
+  revalidatePath("/", "layout")
+  redirect("/dashboard")
+}
+
+export async function signUp(formData: FormData) {
+  const email = formData.get("email") as string
+  const password = formData.get("password") as string
+  const username = formData.get("username") as string
+  const supabase = await createSupabaseServerClient()
+
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      data: {
+        username: username,
+        role: "pending_approval",
+      },
     },
   })
 
+  if (error) {
+    console.error("Sign-up error:", error.message)
+    redirect("/signup?message=Could not create user")
+  }
+
+  if (data.user) {
+    const { error: profileError } = await supabase.from("profiles").insert({
+      id: data.user.id,
+      username: username,
+      email: email,
+      role: "pending_approval",
+    })
+
+    if (profileError) {
+      console.error("Profile creation error:", profileError.message)
+      redirect("/signup?message=Could not create user profile")
+    }
+  }
+
+  revalidatePath("/", "layout")
+  redirect("/login?message=Check email to verify account")
+}
+
+export async function signOut() {
+  const supabase = await createSupabaseServerClient()
   const { error } = await supabase.auth.signOut()
 
   if (error) {
-    console.error("Error signing out:", error)
+    console.error("Sign-out error:", error.message)
   }
 
   revalidatePath("/", "layout")
   redirect("/login")
 }
 
-export async function signUpWithIpCheck(formData: FormData) {
-  const name = formData.get("name") as string
-  const email = formData.get("email") as string
-  const password = formData.get("password") as string
+export async function getUser(): Promise<User | null> {
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser()
 
-  if (!name || !email || !password) {
-    return { error: "Name, email and password are required." }
-  }
-  if (password.length < 6) {
-    return { error: "Password must be at least 6 characters long." }
-  }
-
-  const cookieStore = await cookies()
-  const supabase = createSupabaseServerClient({
-    get(name: string) {
-      return cookieStore.get(name)?.value
-    },
-    set(name: string, value: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value, ...options })
-      } catch (error) {
-        /* Ignored */
-      }
-    },
-    remove(name: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value: "", ...options })
-      } catch (error) {
-        /* Ignored */
-      }
-    },
-  })
-
-  const h = await nextHeaders()
-  const xForwardedFor = h.get("x-forwarded-for")
-  const clientIp = xForwardedFor ? xForwardedFor.split(",")[0].trim() : h.get("remote-addr")
-
-  if (clientIp) {
-    const { data: whitelistedIps, error: ipError } = await supabase
-      .from("allowed_signup_ips")
-      .select("ip_address", { count: "exact" })
-
-    if (ipError) {
-      console.error("Error checking IP whitelist:", ipError)
-      return { error: "Server error checking IP whitelist. Please try again." }
-    }
-
-    if (whitelistedIps && whitelistedIps.length > 0) {
-      const isIpAllowed = whitelistedIps.some((ipObj) => ipObj.ip_address === clientIp)
-      if (!isIpAllowed) {
-        return { error: "Sign-ups from your current IP address are not permitted." }
-      }
-    }
+  if (authError) {
+    console.error("Auth error in getUser:", authError.message)
+    return null
   }
 
-  const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-    email,
-    password,
-    options: {
-      data: { name: name },
-    },
-  })
-
-  if (signUpError) {
-    console.error("Sign-up error:", signUpError)
-    return { error: signUpError.message || "An unexpected error occurred during sign-up." }
+  if (!user) {
+    console.log("No authenticated user found.")
+    return null
   }
 
-  if (signUpData.user && signUpData.user.identities && signUpData.user.identities.length === 0) {
-    return {
-      error:
-        "This email address may already be in use or sign-ups are currently disabled. Please check your email or contact support.",
-    }
+  // Select all columns from profiles and explicitly specify the foreign key relationship for 'teams'
+  // Using '*' will fetch only the columns that actually exist in your database schema.
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select(
+      `
+      *,
+      teams!fk_profiles_team_id(
+        id,
+        name,
+        created_at
+      )
+    `,
+    )
+    .eq("id", user.id)
+    .single()
+
+  if (profileError) {
+    console.error("Error fetching user profile:", profileError)
+    return null
   }
 
-  revalidatePath("/admin/user-approval")
-  return {
-    error: null,
-    success: true,
-    message:
-      "Please check your email to confirm your account. You will be able to log in after an admin approves your account.",
-  }
-}
-
-// Define the state for the login action
-interface LoginState {
-  error?: string | null
-  success?: boolean
-  message?: string | null
-}
-
-export async function login(prevState: LoginState | undefined, formData: FormData): Promise<LoginState> {
-  const email = formData.get("email") as string
-  const password = formData.get("password") as string
-
-  if (!email || !password) {
-    return { error: "Email and password are required." }
+  if (!profile) {
+    console.log(`Profile not found for user: ${user.id}`)
+    return null
   }
 
-  const cookieStore = await cookies()
-  const supabase = createSupabaseServerClient({
-    get(name: string) {
-      return cookieStore.get(name)?.value
-    },
-    set(name: string, value: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value, ...options })
-      } catch (error) {
-        /* Ignored */
-      }
-    },
-    remove(name: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value: "", ...options })
-      } catch (error) {
-        /* Ignored */
-      }
-    },
-  })
-
-  const { error: signInError, data } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  })
-
-  if (signInError) {
-    console.error("Login error:", signInError)
-    if (signInError.message.includes("Email not confirmed")) {
-      return {
-        error:
-          "Please confirm your email address before logging in. If your account requires approval, please wait for an administrator to approve it.",
-      }
-    }
-    return { error: signInError.message || "Invalid login credentials." }
+  // Map the fetched profile data to your User type, safely handling potentially missing properties.
+  // Use optional chaining (?.) and nullish coalescing (?? null) for properties that might not exist
+  // on the 'profile' object if your database schema is missing them, or if they are null.
+  const mappedUser: User = {
+    id: profile.id,
+    name: profile.full_name ?? profile.username ?? "Unknown User", // Safely access full_name
+    email: user.email, // Get email from auth.user
+    role: profile.role as UserRole, // Cast to UserRole
+    team_id: profile.team_id ?? null,
+    avatar_url: profile.avatar_url ?? null,
+    username: profile.username ?? null,
+    full_name: profile.full_name ?? null, // Safely access full_name
+    isp_focus: profile.isp_focus ?? null,
+    entry_date: profile.entry_date ?? null,
+    age: profile.age ?? null,
+    address: profile.address ?? null,
+    phone: profile.phone ?? null,
+    actual_salary: profile.actual_salary ?? null,
+    gender: (profile.gender as Gender | null) ?? null, // Cast and use nullish coalescing
+    teams: profile.teams ?? null,
+    created_at: profile.created_at ?? null,
+    updated_at: profile.updated_at ?? null,
   }
 
-  if (!data.session) {
-    // This case might happen if user is not approved yet or other auth rules prevent session creation
-    const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.user.id).single()
-    if (profile && profile.role === "pending_approval") {
-      return { error: "Your account is awaiting admin approval. Please try again later." }
-    }
-    return { error: "Login failed. Please check your credentials or account status." }
-  }
-
-  // Revalidate relevant paths and redirect
-  revalidatePath("/", "layout") // Revalidate all to update auth state everywhere
-  redirect("/dashboard") // This will be caught by useFormState, so we might not see a success message if redirect happens.
-  // For actions that redirect, it's common not to return a success message directly from the action.
-  // The redirect itself signifies success.
-  // Unreachable code due to redirect, but good for type consistency if redirect was conditional
-  // return { success: true, message: "Login successful! Redirecting..." };
+  return mappedUser
 }

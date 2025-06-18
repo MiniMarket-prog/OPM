@@ -3,29 +3,17 @@ import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 import type { User, UserRole } from "@/lib/types"
 import { TeamLeaderMailersClientPage } from "./mailers-client-page" // New client component
-import type { CookieOptions } from "@supabase/ssr"
 
 async function getTeamLeaderPageData() {
   const cookieStore = await cookies()
-  const supabase = createSupabaseServerClient({
-    get(name: string) {
-      return cookieStore.get(name)?.value
-    },
-    set(name: string, value: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value, ...options })
-      } catch (error) {
-        /* Ignored */
-      }
-    },
-    remove(name: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value: "", ...options })
-      } catch (error) {
-        /* Ignored */
-      }
-    },
-  })
+  // REMOVED: The argument object passed to createSupabaseServerClient
+  const supabase = await createSupabaseServerClient()
+
+  // ADDED: Check if supabase client is undefined
+  if (!supabase) {
+    console.error("Supabase client is undefined in getTeamLeaderPageData!")
+    redirect("/login") // Or handle error appropriately
+  }
 
   const {
     data: { user: authUser },

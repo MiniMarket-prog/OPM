@@ -58,6 +58,7 @@ const navItemsByRole = (role?: User["role"]) => {
       items: [
         { title: "Manage Mailers", href: "/team-leader/mailers", icon: UserPlus, roles: ["team-leader"] },
         { title: "Resource Returns", href: "/team-leader/returns", icon: RotateCcw, roles: ["team-leader"] },
+        { title: "My Profile", href: "/team-leader/profile", icon: UserCircle, roles: ["team-leader"] }, // Add this line
       ],
     },
     {

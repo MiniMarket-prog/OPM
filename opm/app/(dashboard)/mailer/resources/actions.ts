@@ -2,30 +2,61 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { revalidatePath } from "next/cache"
-import { cookies } from "next/headers"
 import type { SeedEmail, Server as ServerType, ProxyItem, Rdp, DailyRevenue } from "@/lib/types"
 import type { PostgrestError } from "@supabase/supabase-js"
-import type { CookieOptions } from "@supabase/ssr"
+import { z } from "zod"
+
+const serverSchema = z.object({
+  id: z.string().optional(),
+  ip_address: z.string().ip({ message: "Invalid IP address" }),
+  username: z.string().min(1, "Username is required"),
+  password_alias: z.string().min(1, "Password alias is required"),
+  status: z.enum(["active", "maintenance", "problem", "returned", "pending_return_approval"]),
+  entry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format, expected YYYY-MM-DD"),
+  user_id: z.string().optional(),
+  team_id: z.string().optional(),
+})
+
+const proxySchema = z.object({
+  id: z.string().optional(),
+  proxy_string: z.string().min(1, "Proxy string is required"),
+  status: z.enum(["active", "maintenance", "problem", "returned", "pending_return_approval"]),
+  entry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format, expected YYYY-MM-DD"),
+  user_id: z.string().optional(),
+  team_id: z.string().optional(),
+})
+
+const seedEmailSchema = z.object({
+  id: z.string().optional(),
+  email_address: z.string().email("Invalid email address"),
+  status: z.enum(["active", "maintenance", "problem", "returned", "pending_return_approval"]),
+  entry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format, expected YYYY-MM-DD"),
+  group_name: z.string().min(1, "Group name is required"),
+  user_id: z.string().optional(),
+  team_id: z.string().optional(),
+})
+
+const rdpSchema = z.object({
+  id: z.string().optional(),
+  ip_address: z.string().ip({ message: "Invalid IP address" }),
+  username: z.string().min(1, "Username is required"),
+  password_alias: z.string().min(1, "Password alias is required"),
+  status: z.enum(["active", "maintenance", "problem", "returned", "pending_return_approval"]),
+  entry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format, expected YYYY-MM-DD"),
+  user_id: z.string().optional(),
+  team_id: z.string().optional(),
+  connection_info: z.string().optional(), // New field
+})
+
+const dailyRevenueSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format, expected YYYY-MM-DD"),
+  amount: z.number().min(0, "Amount must be non-negative"),
+  mailer_id: z.string(),
+  team_id: z.string(),
+})
 
 async function getSupabaseClient() {
-  const cookieStore = await cookies()
-  return createSupabaseServerClient({
-    get: (name: string) => cookieStore.get(name)?.value,
-    set: (name: string, value: string, options: CookieOptions) => {
-      try {
-        cookieStore.set(name, value, options)
-      } catch (error) {
-        // The `set` method was called from a Server Component.
-      }
-    },
-    remove: (name: string, options: CookieOptions) => {
-      try {
-        cookieStore.set(name, "", { ...options, maxAge: 0 })
-      } catch (error) {
-        // The `delete` method was called from a Server Component.
-      }
-    },
-  })
+  return await createSupabaseServerClient() // Await the async function
 }
 
 type ActionResult<T = any> = {
@@ -373,7 +404,37 @@ export async function addDailyRevenue(
 
   if (error) return { error: `Failed to log revenue: ${error.message}` }
   revalidatePath("/mailer/resources")
+  revalidatePath("/dashboard")
   return { success: `Revenue for ${date} logged successfully.`, data: data || undefined }
+}
+
+// NEW: Update Daily Revenue
+export async function updateDailyRevenue(
+  id: string,
+  date: string,
+  amount: number,
+): Promise<ActionResult<DailyRevenue>> {
+  const supabase = await getSupabaseClient()
+  if (!date || isNaN(amount) || amount < 0) {
+    return { error: "A valid date and a positive amount are required." }
+  }
+
+  // Server-side validation for date format
+  if (!isValidDate(date)) {
+    return { error: `Invalid Date format: "${date}". Expected YYYY-MM-DD.` }
+  }
+
+  const { data: updatedRevenue, error } = await supabase
+    .from("daily_revenue")
+    .update({ date: date, amount: amount })
+    .eq("id", id)
+    .select()
+    .single()
+
+  if (error) return { error: `Failed to update revenue: ${error.message}` }
+  revalidatePath("/mailer/resources")
+  revalidatePath("/dashboard") // Revalidate dashboard as well
+  return { success: "Revenue updated successfully.", data: updatedRevenue }
 }
 
 export async function updateServer(
@@ -381,6 +442,12 @@ export async function updateServer(
   updateData: Partial<Pick<ServerType, "provider" | "ip_address" | "status">>,
 ): Promise<ActionResult<ServerType>> {
   const supabase = await getSupabaseClient()
+
+  // If a mailer tries to set status to 'returned', change it to 'pending_return_approval'
+  if (updateData.status === "returned") {
+    updateData.status = "pending_return_approval"
+  }
+
   const { data: updatedServer, error } = await supabase
     .from("servers")
     .update(updateData)
@@ -482,4 +549,412 @@ export async function deleteRdp(id: string): Promise<ActionResult> {
   if (error) return { error: `Failed to delete RDP: ${error.message}` }
   revalidatePath("/mailer/resources")
   return { success: "RDP deleted successfully." }
+}
+
+// NEW: Delete Daily Revenue
+export async function deleteDailyRevenue(id: string): Promise<ActionResult> {
+  const supabase = await getSupabaseClient()
+  const { error } = await supabase.from("daily_revenue").delete().eq("id", id)
+  if (error) return { error: `Failed to delete revenue entry: ${error.message}` }
+  revalidatePath("/mailer/resources")
+  revalidatePath("/dashboard") // Revalidate dashboard as well
+  return { success: "Revenue entry deleted successfully." }
+}
+
+export async function addServer(formData: FormData) {
+  // Await the createSupabaseServerClient call
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return { error: "User not authenticated." }
+  }
+
+  const parsed = serverSchema.safeParse({
+    ip_address: formData.get("ip_address"),
+    username: formData.get("username"),
+    password_alias: formData.get("password_alias"),
+    status: formData.get("status"),
+    entry_date: formData.get("entry_date"),
+    user_id: user.id,
+    team_id: user.user_metadata.team_id,
+  })
+
+  if (!parsed.success) {
+    return { error: "Invalid input for server.", partialErrors: parsed.error.issues.map((i) => i.message) }
+  }
+
+  const { data, error } = await supabase.from("servers").insert([parsed.data]).select().single()
+
+  if (error) {
+    console.error("Error adding server:", error)
+    return { error: error.message }
+  }
+
+  revalidatePath("/mailer/resources")
+  return { success: "Server added successfully.", data }
+}
+
+export async function updateServerForm(formData: FormData) {
+  // Await the createSupabaseServerClient call
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return { error: "User not authenticated." }
+  }
+
+  const id = formData.get("id") as string
+  const updateData = {
+    ip_address: formData.get("ip_address"),
+    username: formData.get("username"),
+    password_alias: formData.get("password_alias"),
+    status: formData.get("status"),
+    entry_date: formData.get("entry_date"),
+  }
+
+  const parsed = serverSchema.safeParse(updateData)
+
+  if (!parsed.success) {
+    return { error: "Invalid input for server update.", partialErrors: parsed.error.issues.map((i) => i.message) }
+  }
+
+  // Intercept "returned" status from mailer and change to "pending_return_approval"
+  if (parsed.data.status === "returned") {
+    parsed.data.status = "pending_return_approval"
+  }
+
+  const { data, error } = await supabase.from("servers").update(parsed.data).eq("id", id).select().single()
+
+  if (error) {
+    console.error("Error updating server:", error)
+    return { error: error.message }
+  }
+
+  revalidatePath("/mailer/resources")
+  revalidatePath("/team-leader/returns") // Revalidate TL returns page for new pending items
+  return { success: "Server updated successfully.", data }
+}
+
+export async function deleteServerAction(id: string) {
+  // Await the createSupabaseServerClient call
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.from("servers").delete().eq("id", id)
+
+  if (error) {
+    console.error("Error deleting server:", error)
+    return { error: error.message }
+  }
+
+  revalidatePath("/mailer/resources")
+  return { success: "Server deleted successfully." }
+}
+
+export async function addProxy(formData: FormData) {
+  // Await the createSupabaseServerClient call
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return { error: "User not authenticated." }
+  }
+
+  const parsed = proxySchema.safeParse({
+    proxy_string: formData.get("proxy_string"),
+    status: formData.get("status"),
+    entry_date: formData.get("entry_date"),
+    user_id: user.id,
+    team_id: user.user_metadata.team_id,
+  })
+
+  if (!parsed.success) {
+    return { error: "Invalid input for proxy.", partialErrors: parsed.error.issues.map((i) => i.message) }
+  }
+
+  const { data, error } = await supabase.from("proxies").insert([parsed.data]).select().single()
+
+  if (error) {
+    console.error("Error adding proxy:", error)
+    return { error: error.message }
+  }
+
+  revalidatePath("/mailer/resources")
+  return { success: "Proxy added successfully.", data }
+}
+
+export async function updateProxyForm(formData: FormData) {
+  // Await the createSupabaseServerClient call
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return { error: "User not authenticated." }
+  }
+
+  const id = formData.get("id") as string
+  const updateData = {
+    proxy_string: formData.get("proxy_string"),
+    status: formData.get("status"),
+    entry_date: formData.get("entry_date"),
+  }
+
+  const parsed = proxySchema.safeParse(updateData)
+
+  if (!parsed.success) {
+    return { error: "Invalid input for proxy update.", partialErrors: parsed.error.issues.map((i) => i.message) }
+  }
+
+  const { data, error } = await supabase.from("proxies").update(parsed.data).eq("id", id).select().single()
+
+  if (error) {
+    console.error("Error updating proxy:", error)
+    return { error: error.message }
+  }
+
+  revalidatePath("/mailer/resources")
+  return { success: "Proxy updated successfully.", data }
+}
+
+export async function deleteProxyAction(id: string) {
+  // Await the createSupabaseServerClient call
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.from("proxies").delete().eq("id", id)
+
+  if (error) {
+    console.error("Error deleting proxy:", error)
+    return { error: error.message }
+  }
+
+  revalidatePath("/mailer/resources")
+  return { success: "Proxy deleted successfully." }
+}
+
+export async function addSeedEmail(formData: FormData) {
+  // Await the createSupabaseServerClient call
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return { error: "User not authenticated." }
+  }
+
+  const parsed = seedEmailSchema.safeParse({
+    email_address: formData.get("email_address"),
+    status: formData.get("status"),
+    entry_date: formData.get("entry_date"),
+    group_name: formData.get("group_name"),
+    user_id: user.id,
+    team_id: user.user_metadata.team_id,
+  })
+
+  if (!parsed.success) {
+    return { error: "Invalid input for seed email.", partialErrors: parsed.error.issues.map((i) => i.message) }
+  }
+
+  const { data, error } = await supabase.from("seed_emails").insert([parsed.data]).select().single()
+
+  if (error) {
+    console.error("Error adding seed email:", error)
+    return { error: error.message }
+  }
+
+  revalidatePath("/mailer/resources")
+  return { success: "Seed email added successfully.", data }
+}
+
+export async function updateSeedEmailForm(formData: FormData) {
+  // Await the createSupabaseServerClient call
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return { error: "User not authenticated." }
+  }
+
+  const id = formData.get("id") as string
+  const updateData = {
+    email_address: formData.get("email_address"),
+    status: formData.get("status"),
+    entry_date: formData.get("entry_date"),
+    group_name: formData.get("group_name"),
+  }
+
+  const parsed = seedEmailSchema.safeParse(updateData)
+
+  if (!parsed.success) {
+    return { error: "Invalid input for seed email update.", partialErrors: parsed.error.issues.map((i) => i.message) }
+  }
+
+  const { data, error } = await supabase.from("seed_emails").update(parsed.data).eq("id", id).select().single()
+
+  if (error) {
+    console.error("Error updating seed email:", error)
+    return { error: error.message }
+  }
+
+  revalidatePath("/mailer/resources")
+  return { success: "Seed email updated successfully.", data }
+}
+
+export async function deleteSeedEmailAction(id: string) {
+  // Await the createSupabaseServerClient call
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.from("seed_emails").delete().eq("id", id)
+
+  if (error) {
+    console.error("Error deleting seed email:", error)
+    return { error: error.message }
+  }
+
+  revalidatePath("/mailer/resources")
+  return { success: "Seed email deleted successfully." }
+}
+
+export async function addRdpForm(formData: FormData) {
+  // Await the createSupabaseServerClient call
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return { error: "User not authenticated." }
+  }
+
+  const parsed = rdpSchema.safeParse({
+    ip_address: formData.get("ip_address"),
+    username: formData.get("username"),
+    password_alias: formData.get("password_alias"),
+    status: formData.get("status"),
+    entry_date: formData.get("entry_date"),
+    user_id: user.id,
+    team_id: user.user_metadata.team_id,
+    connection_info: formData.get("connection_info"),
+  })
+
+  if (!parsed.success) {
+    return { error: "Invalid input for RDP.", partialErrors: parsed.error.issues.map((i) => i.message) }
+  }
+
+  const { data, error } = await supabase.from("rdps").insert([parsed.data]).select().single()
+
+  if (error) {
+    console.error("Error adding RDP:", error)
+    return { error: error.message }
+  }
+
+  revalidatePath("/mailer/resources")
+  return { success: "RDP added successfully.", data }
+}
+
+export async function updateRdpForm(formData: FormData) {
+  // Await the createSupabaseServerClient call
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return { error: "User not authenticated." }
+  }
+
+  const id = formData.get("id") as string
+  const updateData = {
+    ip_address: formData.get("ip_address"),
+    username: formData.get("username"),
+    password_alias: formData.get("password_alias"),
+    status: formData.get("status"),
+    entry_date: formData.get("entry_date"),
+    connection_info: formData.get("connection_info"),
+  }
+
+  const parsed = rdpSchema.safeParse(updateData)
+
+  if (!parsed.success) {
+    return { error: "Invalid input for RDP update.", partialErrors: parsed.error.issues.map((i) => i.message) }
+  }
+
+  const { data, error } = await supabase.from("rdps").update(parsed.data).eq("id", id).select().single()
+
+  if (error) {
+    console.error("Error updating RDP:", error)
+    return { error: error.message }
+  }
+
+  revalidatePath("/mailer/resources")
+  return { success: "RDP updated successfully.", data }
+}
+
+export async function deleteRdpAction(id: string) {
+  // Await the createSupabaseServerClient call
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.from("rdps").delete().eq("id", id)
+
+  if (error) {
+    console.error("Error deleting RDP:", error)
+    return { error: error.message }
+  }
+
+  revalidatePath("/mailer/resources")
+  return { success: "RDP deleted successfully." }
+}
+
+export async function addDailyRevenueAction(date: string, amount: number, mailer_id: string, team_id: string) {
+  // Await the createSupabaseServerClient call
+  const supabase = await createSupabaseServerClient()
+
+  const parsed = dailyRevenueSchema.safeParse({ date, amount, mailer_id, team_id })
+
+  if (!parsed.success) {
+    return { error: "Invalid input for daily revenue.", partialErrors: parsed.error.issues.map((i) => i.message) }
+  }
+
+  // Check if an entry for this date and mailer already exists
+  const { data: existingEntry, error: fetchError } = await supabase
+    .from("daily_revenue")
+    .select("*")
+    .eq("date", parsed.data.date)
+    .eq("mailer_id", parsed.data.mailer_id)
+    .single()
+
+  if (fetchError && fetchError.code !== "PGRST116") {
+    // PGRST116 means "no rows found", which is expected if no entry exists
+    console.error("Error checking existing revenue entry:", fetchError)
+    return { error: fetchError.message }
+  }
+
+  let data, error
+  if (existingEntry) {
+    // Update existing entry
+    ;({ data, error } = await supabase
+      .from("daily_revenue")
+      .update({ amount: parsed.data.amount })
+      .eq("id", existingEntry.id)
+      .select()
+      .single())
+  } else {
+    // Insert new entry
+    ;({ data, error } = await supabase.from("daily_revenue").insert([parsed.data]).select().single())
+  }
+
+  if (error) {
+    console.error("Error logging daily revenue:", error)
+    return { error: error.message }
+  }
+
+  revalidatePath("/mailer/resources")
+  revalidatePath("/dashboard") // Revalidate dashboard to update revenue notifications
+  return { success: "Daily revenue logged successfully.", data }
 }

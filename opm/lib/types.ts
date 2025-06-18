@@ -1,84 +1,56 @@
-export type UserRole = "admin" | "team-leader" | "mailer" | "user" | "pending_approval"
+import type { Database } from "./database.types"
+
+export type UserRole = "admin" | "team-leader" | "mailer" | "pending_approval"
 export type Gender = "male" | "female" | "other" | "prefer_not_to_say"
 
-export interface User {
+export type User = {
   id: string
-  name: string // This is the application-level display name.
-  email?: string
+  name: string // This is the application-level display name (can be full_name or username).
+  email?: string | null
   role: UserRole
   team_id?: string | null
   avatar_url?: string | null
-  isp_focus?: string[] | null | undefined
+  username?: string | null
+  full_name?: string | null // Added full_name
+  isp_focus?: string[] | null
   entry_date?: string | null
   age?: number | null
   address?: string | null
   phone?: string | null
   actual_salary?: number | null
-  gender?: Gender | null
-  teams?: Team | null
-  created_at?: string
-  updated_at?: string
-  username?: string | null
+  gender?: Gender | null // Ensure this is Gender type
+  teams?: Team | null // Added teams relation to User type
+  created_at?: string | null // Changed to allow null
+  updated_at?: string | null // Changed to allow null
 }
 
-export interface Team {
-  id: string
-  name: string
-  created_at?: string
+export type Team = Database["public"]["Tables"]["teams"]["Row"]
+
+export type Server = Database["public"]["Tables"]["servers"]["Row"]
+
+export type ProxyItem = Database["public"]["Tables"]["proxies"]["Row"]
+
+export type SeedEmail = Database["public"]["Tables"]["seed_emails"]["Row"]
+
+export type Rdp = Database["public"]["Tables"]["rdps"]["Row"]
+
+export type DailyRevenue = Database["public"]["Tables"]["daily_revenues"]["Row"]
+
+// Define a generic ActionResult type for Server Actions
+export type ActionResult<T = void> = {
+  success: boolean
+  message: string // Ensure message is always present
+  data?: T
+  error?: string
 }
 
-export interface Server {
+export type ResourceReturnItem = {
   id: string
-  provider: string
   ip_address: string
-  added_by_mailer_id: string
-  user_id?: string // ADDED: Link to the user who added it
-  team_id: string
-  status: "active" | "maintenance" | "problem" | "returned"
-}
-
-export interface SeedEmail {
-  id: string
-  email_address: string
-  password_alias: string
-  recovery_email?: string | null
-  isp: string
-  status: "active" | "warmup" | "banned" | "cooldown"
-  added_by_mailer_id: string
-  user_id?: string // ADDED: Link to the user who added it
-  team_id: string
-  entry_date?: string
-  group_name?: string | null
-}
-
-export interface ProxyItem {
-  id: string
-  proxy_string: string
-  added_by_mailer_id: string
-  user_id?: string // ADDED: Link to the user who added it
-  team_id: string
-  status: "active" | "banned" | "slow" | "returned"
-}
-
-export interface Rdp {
-  id: string
-  ip_address: string // Explicit IP address field
-  username: string // Explicit username field
-  password_alias: string
-  entry_date?: string | null // New: Entry date for the RDP
-  added_by_mailer_id: string
-  user_id?: string
-  team_id: string
-  status: "active" | "problem" | "returned"
-}
-
-export interface DailyRevenue {
-  id: string
-  mailer_id: string
-  team_id: string
-  date: string
-  amount: number
-  created_at: string
+  status: string
+  user_id: string | null
+  connection_info?: string | null
+  profiles?: { full_name: string | null }[] | null // Changed to array of profiles
 }
 
 export interface MockDB {

@@ -1,29 +1,10 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server"
-import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
-import type { User, Server, ProxyItem, SeedEmail, Rdp, Team, UserRole } from "@/lib/types"
-import type { CookieOptions } from "@supabase/ssr"
+import type { User, Server, ProxyItem, SeedEmail, Rdp, Team, UserRole, Gender } from "@/lib/types" // Import Gender type
 import TLResourcesClientPage from "./resources-client-page"
 
 async function getTLResourcesPageData() {
-  const cookieStore = await cookies()
-  const supabase = createSupabaseServerClient({
-    get: (name: string) => cookieStore.get(name)?.value,
-    set: (name: string, value: string, options: CookieOptions) => {
-      try {
-        cookieStore.set({ name, value, ...options })
-      } catch (error) {
-        /* Ignored */
-      }
-    },
-    remove: (name: string, options: CookieOptions) => {
-      try {
-        cookieStore.set({ name, value: "", ...options })
-      } catch (error) {
-        /* Ignored */
-      }
-    },
-  })
+  const supabase = await createSupabaseServerClient()
 
   const {
     data: { user: authUser },
@@ -42,7 +23,7 @@ async function getTLResourcesPageData() {
 
   const { data: allUsersData, error: allUsersError } = await supabase
     .from("profiles")
-    .select("id, name, email, role, team_id, avatar_url")
+    .select("id, username, email, role, team_id, avatar_url") // Select username instead of name
 
   if (profileError || !profileData) {
     console.error("Error fetching TL profile or profile not found:", profileError)
@@ -51,7 +32,7 @@ async function getTLResourcesPageData() {
 
   const currentUser: User & { teams?: Team } = {
     id: profileData.id,
-    name: profileData.name || "User",
+    name: profileData.full_name || profileData.username || "User", // Use full_name or username for name
     email: authUser.email,
     role: profileData.role as UserRole,
     team_id: profileData.team_id,
@@ -59,7 +40,8 @@ async function getTLResourcesPageData() {
     teams: profileData.teams || undefined, // Ensure null is converted to undefined
   }
 
-  if (currentUser.role !== "team-leader" || !currentUser.team_id) {
+  // Corrected comparison: assuming UserRole uses "team-leader" (kebab-case)
+  if (currentUser.role !== "team-leader" && currentUser.role !== "admin") {
     redirect("/dashboard")
   }
 
@@ -85,20 +67,64 @@ async function getTLResourcesPageData() {
   const { data: teamMailersData, error: mailersError } = await supabase
     .from("profiles")
     .select(
-      "id, name, email, role, team_id, avatar_url, isp_focus, entry_date, age, address, phone, actual_salary, gender, username",
+      "id, username, email, role, team_id, avatar_url, isp_focus, entry_date, age, address, phone, actual_salary, gender, full_name", // Include full_name
     )
     .eq("role", "mailer")
     .eq("team_id", teamId)
   if (mailersError) console.error("Error fetching team mailers:", mailersError)
 
-  const allUsersForSimulator: User[] = (allUsersData || []).map((p) => ({
-    id: p.id,
-    name: p.name || "User",
-    email: p.email || undefined,
-    role: p.role as UserRole,
-    team_id: p.team_id || undefined,
-    avatar_url: p.avatar_url || undefined,
-  }))
+  // Explicitly type 'p' based on the selected columns and map username to name
+  const allUsersForSimulator: User[] = (allUsersData || []).map(
+    (p: {
+      id: string
+      username: string | null
+      email: string | null
+      role: string | null
+      team_id: string | null
+      avatar_url: string | null
+    }) => ({
+      id: p.id,
+      name: p.username || "User", // Map username to name
+      email: p.email || undefined,
+      role: p.role as UserRole,
+      team_id: p.team_id || undefined,
+      avatar_url: p.avatar_url || undefined,
+    }),
+  )
+
+  // Map teamMailersData to User type, using full_name or username for name
+  const initialTeamMailers: User[] = (teamMailersData || []).map(
+    (p: {
+      id: string
+      username: string | null
+      email: string | null
+      role: string | null
+      team_id: string | null
+      avatar_url: string | null
+      isp_focus: string[] | null
+      entry_date: string | null
+      age: number | null
+      address: string | null
+      phone: string | null
+      actual_salary: number | null
+      gender: string | null // Keep as string | null for the raw data
+      full_name: string | null // Ensure full_name is selected
+    }) => ({
+      id: p.id,
+      name: p.full_name || p.username || "Mailer", // Use full_name or username for name
+      email: p.email || undefined,
+      role: p.role as UserRole,
+      team_id: p.team_id || undefined,
+      avatar_url: p.avatar_url || undefined,
+      isp_focus: p.isp_focus,
+      entry_date: p.entry_date,
+      age: p.age,
+      address: p.address,
+      phone: p.phone,
+      actual_salary: p.actual_salary,
+      gender: p.gender as Gender | null, // Type assertion here
+    }),
+  )
 
   return {
     currentUser,
@@ -107,7 +133,7 @@ async function getTLResourcesPageData() {
     initialProxies: (proxiesData as ProxyItem[]) || [],
     initialSeedEmails: (seedEmailsData as SeedEmail[]) || [],
     initialRdps: (rdpsData as Rdp[]) || [],
-    initialTeamMailers: (teamMailersData as User[]) || [],
+    initialTeamMailers: initialTeamMailers, // Use the mapped mailers
   }
 }
 

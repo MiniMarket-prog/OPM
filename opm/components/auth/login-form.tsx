@@ -1,16 +1,17 @@
 "use client"
 
-import { useActionState, useEffect } from "react" // Import useActionState from react
-import { useFormStatus } from "react-dom" // Keep useFormStatus from react-dom
+import { useActionState, useEffect } from "react"
+import { useFormStatus } from "react-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertCircle, CheckCircle2, LogIn } from "lucide-react"
 import Link from "next/link"
-import { login } from "@/app/auth/actions"
+import { signIn } from "@/app/auth/actions"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { toast } from "sonner"
+import type { ActionResult } from "@/lib/types"
 
 interface LoginFormProps {
   ipStatus?: {
@@ -19,23 +20,30 @@ interface LoginFormProps {
   }
 }
 
+// Define the state for the login action, matching ActionResult
+interface LoginState extends ActionResult {
+  // No additional properties needed here, as ActionResult covers success, message, error
+}
+
 // Define the initial state for useActionState
-const initialState = {
-  error: null,
+const initialState: LoginState = {
+  error: undefined, // Changed from null to undefined
   success: false,
-  message: null,
+  message: "", // Changed from null to empty string
 }
 
 export function LoginForm({ ipStatus }: LoginFormProps) {
   // Using useActionState from React
-  const [state, formAction] = useActionState(login, initialState)
+  const [state, formAction] = useActionState(signIn, initialState)
 
   useEffect(() => {
     if (state?.error) {
       toast.error("Login Failed", { description: state.error })
+    } else if (state?.success && state.message) {
+      // Only show success toast if there's a message and no redirect happens immediately
+      // (Redirects usually handle success visually)
+      // toast.success("Login Successful", { description: state.message });
     }
-    // Success messages are tricky with redirects. If the action redirects,
-    // the success toast might not be seen. Usually, the redirect itself is the success indicator.
   }, [state])
 
   return (

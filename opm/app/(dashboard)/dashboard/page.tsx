@@ -1,35 +1,11 @@
-import { cookies } from "next/headers"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
-import type { User, Team, UserRole, Gender } from "@/lib/types" // Ensure UserRole and Gender are imported
-import { DashboardClientContent, type DashboardStats } from "../dashboard-client-content"
-import type { CookieOptions } from "@supabase/ssr"
+import { DashboardClientContent } from "./dashboard-client-content" // Changed to named import
+import { format } from "date-fns"
+import type { User, Team, ResourceReturnItem } from "@/lib/types" // Import User, Team, ResourceReturnItem
 
-async function getDashboardData(): Promise<{
-  initialUser: User & { teams: Team | null }
-  allUsersForSimulator: User[]
-  stats: DashboardStats
-}> {
-  const cookieStore = await cookies()
-  const supabase = createSupabaseServerClient({
-    get(name: string) {
-      return cookieStore.get(name)?.value
-    },
-    set(name: string, value: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value, ...options })
-      } catch (error) {
-        /* Middleware handling */
-      }
-    },
-    remove(name: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value: "", ...options })
-      } catch (error) {
-        /* Middleware handling */
-      }
-    },
-  })
+async function getDashboardData() {
+  const supabase = await createSupabaseServerClient()
 
   const {
     data: { user: authUser },
@@ -40,133 +16,193 @@ async function getDashboardData(): Promise<{
     redirect("/login")
   }
 
-  const { data: dbProfile, error: profileError } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("*, teams!fk_profiles_team_id(id, name)")
+    .select("*, teams!fk_profiles_team_id(*)") // Explicitly select teams using the foreign key
     .eq("id", authUser.id)
     .single()
 
-  if (profileError || !dbProfile) {
-    console.error("Dashboard: Auth profile error:", profileError)
+  if (profileError || !profile) {
+    console.error("Error fetching user profile:", profileError)
     redirect("/login")
   }
 
-  const initialUser: User & { teams: Team | null } = {
-    id: dbProfile.id,
-    name: dbProfile.name || dbProfile.username || "User",
-    email: authUser.email || undefined,
-    role: dbProfile.role as UserRole, // This will now use the imported UserRole
-    team_id: dbProfile.team_id || undefined,
-    avatar_url: dbProfile.avatar_url || undefined,
-    isp_focus: dbProfile.isp_focus || undefined,
-    entry_date: dbProfile.entry_date || undefined,
-    age: dbProfile.age || undefined,
-    address: dbProfile.address || undefined,
-    phone: dbProfile.phone || undefined,
-    actual_salary: dbProfile.actual_salary || undefined,
-    gender: (dbProfile.gender as Gender) || undefined, // This will use the imported Gender
-    teams: dbProfile.teams as Team | null,
+  // Fetch all mailers
+  const { data: allMailers, error: mailersError } = await supabase
+    .from("profiles")
+    .select("id, full_name, team_id")
+    .eq("role", "mailer")
+
+  if (mailersError) {
+    console.error("Error fetching mailers:", mailersError)
+    return {
+      currentUser: profile as User & { teams: Team | null }, // Cast to include teams
+      mailersNeedingRevenueLog: [],
+      teamPendingReturns: [],
+      totalServers: 0,
+      totalProxies: 0,
+      totalSeedEmails: 0,
+      totalRdps: 0,
+      totalMailers: 0,
+      totalTeams: 0,
+      totalPendingUsers: 0,
+      totalUsers: 0, // Added
+      totalTeamLeaders: 0, // Added
+    }
   }
 
-  const { data: allDbProfiles, error: allUsersError } = await supabase
-    .from("profiles")
-    .select("id, username, name, role, team_id, avatar_url, email") // Ensure 'email' is selected if needed for User type
+  const yesterday = format(new Date(new Date().setDate(new Date().getDate() - 1)), "yyyy-MM-dd")
 
-  if (allUsersError) {
-    console.error("Error fetching all users for simulator:", allUsersError)
+  const { data: loggedRevenues, error: revenueError } = await supabase
+    .from("daily_revenues")
+    .select("mailer_id")
+    .eq("date", yesterday)
+
+  if (revenueError) {
+    console.error("Error fetching logged revenues:", revenueError)
+    return {
+      currentUser: profile as User & { teams: Team | null }, // Cast to include teams
+      mailersNeedingRevenueLog: [],
+      teamPendingReturns: [],
+      totalServers: 0,
+      totalProxies: 0,
+      totalSeedEmails: 0,
+      totalRdps: 0,
+      totalMailers: 0,
+      totalTeams: 0,
+      totalPendingUsers: 0,
+      totalUsers: 0, // Added
+      totalTeamLeaders: 0, // Added
+    }
   }
 
-  const allUsersForSimulator: User[] = (allDbProfiles || []).map((profile) => ({
-    id: profile.id,
-    name: profile.name || profile.username || "User",
-    // Supabase auth email might not be in profiles table directly,
-    // so ensure your User type and this mapping handle it.
-    // If profile.email is from the profiles table, ensure it's selected.
-    // If it should be from auth.users, this mapping might need adjustment or UserRoleSimulator might need to fetch it.
-    email: profile.email || undefined, // Assuming profile might have an email field
-    role: profile.role as UserRole, // This will now use the imported UserRole
-    team_id: profile.team_id || undefined,
-    avatar_url: profile.avatar_url || undefined,
-    // Ensure all required fields for User type are mapped here
-    isp_focus: undefined, // Add other fields from User type if UserRoleSimulator uses them
-    entry_date: undefined,
-    age: undefined,
-    address: undefined,
-    phone: undefined,
-    actual_salary: undefined,
-    gender: undefined,
-  }))
+  const mailersWithRevenue = new Set(loggedRevenues?.map((r) => r.mailer_id))
+  const mailersNeedingRevenueLog = allMailers?.filter((mailer) => !mailersWithRevenue.has(mailer.id)) || []
 
-  const { count: totalUsers } = await supabase.from("profiles").select("*", { count: "exact", head: true })
-  const { count: totalTeamLeaders } = await supabase
-    .from("profiles")
+  // Filter mailers needing revenue log by team for Team Leaders
+  const mailersNeedingRevenueLogForTL =
+    profile.role === "team-leader"
+      ? mailersNeedingRevenueLog.filter((mailer) => mailer.team_id === profile.team_id)
+      : mailersNeedingRevenueLog
+
+  // Fetch counts for resources
+  const { count: totalServers, error: serversCountError } = await supabase
+    .from("servers")
     .select("*", { count: "exact", head: true })
-    .eq("role", "team-leader")
-  const { count: totalMailers } = await supabase
+
+  const { count: totalProxies, error: proxiesCountError } = await supabase
+    .from("proxies")
+    .select("*", { count: "exact", head: true })
+
+  const { count: totalSeedEmails, error: seedEmailsCountError } = await supabase
+    .from("seed_emails")
+    .select("*", { count: "exact", head: true })
+
+  const { count: totalRdps, error: rdpsCountError } = await supabase
+    .from("rdps")
+    .select("*", { count: "exact", head: true })
+
+  const { count: totalMailers, error: mailersCountError } = await supabase
     .from("profiles")
     .select("*", { count: "exact", head: true })
     .eq("role", "mailer")
-  const { count: totalServers } = await supabase.from("servers").select("*", { count: "exact", head: true })
-  const { count: activeServers } = await supabase
-    .from("servers")
-    .select("*", { count: "exact", head: true })
-    .eq("status", "active")
-  const { count: returnedServers } = await supabase
-    .from("servers")
-    .select("*", { count: "exact", head: true })
-    .eq("status", "returned")
-  const { count: totalSeedEmails } = await supabase.from("seed_emails").select("*", { count: "exact", head: true })
-  const { count: activeSeedEmails } = await supabase
-    .from("seed_emails")
-    .select("*", { count: "exact", head: true })
-    .eq("status", "active")
-  const { count: warmupSeedEmails } = await supabase
-    .from("seed_emails")
-    .select("*", { count: "exact", head: true })
-    .eq("status", "warmup")
-  const { count: totalProxies } = await supabase.from("proxies").select("*", { count: "exact", head: true })
-  const { count: activeProxies } = await supabase
-    .from("proxies")
-    .select("*", { count: "exact", head: true })
-    .eq("status", "active")
-  const { count: returnedProxies } = await supabase
-    .from("proxies")
-    .select("*", { count: "exact", head: true })
-    .eq("status", "returned")
 
-  const stats: DashboardStats = {
-    totalUsers: totalUsers ?? 0,
-    totalTeamLeaders: totalTeamLeaders ?? 0,
-    totalMailers: totalMailers ?? 0,
-    totalServers: totalServers ?? 0,
-    activeServers: activeServers ?? 0,
-    returnedServers: returnedServers ?? 0,
-    totalSeedEmails: totalSeedEmails ?? 0,
-    activeSeedEmails: activeSeedEmails ?? 0,
-    warmupSeedEmails: warmupSeedEmails ?? 0,
-    totalProxies: totalProxies ?? 0,
-    activeProxies: activeProxies ?? 0,
-    returnedProxies: returnedProxies ?? 0,
+  const { count: totalTeams, error: teamsCountError } = await supabase
+    .from("teams")
+    .select("*", { count: "exact", head: true })
+
+  // Fetch total users (all profiles not pending approval)
+  const { count: totalUsers, error: usersCountError } = await supabase
+    .from("profiles")
+    .select("*", { count: "exact", head: true })
+    .neq("role", "pending_approval") // Exclude pending approval users
+
+  if (usersCountError) console.error("Error fetching total users:", usersCountError)
+
+  // Fetch total team leaders
+  const { count: totalTeamLeaders, error: teamLeadersCountError } = await supabase
+    .from("profiles")
+    .select("*", { count: "exact", head: true })
+    .eq("role", "team-leader")
+
+  if (teamLeadersCountError) console.error("Error fetching total team leaders:", teamLeadersCountError)
+
+  // Fetch pending server returns for Team Leaders
+  const { count: totalPendingUsers, error: pendingUsersError } = await supabase
+    .from("profiles")
+    .select("*", { count: "exact", head: true })
+    .eq("role", "pending_approval")
+
+  if (pendingUsersError) console.error("Error fetching total pending users:", pendingUsersError)
+
+  let teamPendingReturns: ResourceReturnItem[] = [] // Explicitly type here
+  if (profile.role === "team-leader" && profile.team_id) {
+    const { data: pendingServers, error: pendingServersError } = await supabase
+      .from("servers")
+      .select("id, ip_address, status, user_id, profiles!servers_user_id_fkey(full_name)") // Explicitly select profiles using the user_id foreign key
+      .eq("team_id", profile.team_id)
+      .eq("status", "pending_return_approval")
+
+    if (pendingServersError) {
+      console.error("Error fetching pending server returns for TL:", pendingServersError)
+    } else {
+      // Map the data to match ResourceReturnItem structure
+      teamPendingReturns = (pendingServers || []).map((server) => ({
+        id: server.id,
+        ip_address: server.ip_address,
+        status: server.status,
+        user_id: server.user_id,
+        profiles: server.profiles ? [server.profiles] : null, // Ensure profiles is an array
+      })) as ResourceReturnItem[]
+    }
   }
 
   return {
-    initialUser,
-    allUsersForSimulator,
-    stats,
+    currentUser: profile as User & { teams: Team | null }, // Cast to include teams
+    mailersNeedingRevenueLog: mailersNeedingRevenueLogForTL,
+    teamPendingReturns: teamPendingReturns,
+    totalServers: totalServers || 0,
+    totalProxies: totalProxies || 0,
+    totalSeedEmails: totalSeedEmails || 0,
+    totalRdps: totalRdps || 0,
+    totalMailers: totalMailers || 0,
+    totalTeams: totalTeams || 0,
+    totalPendingUsers: totalPendingUsers || 0,
+    totalUsers: totalUsers || 0, // Added
+    totalTeamLeaders: totalTeamLeaders || 0, // Added
   }
 }
 
 export default async function DashboardPage() {
-  const data = await getDashboardData()
+  const {
+    currentUser,
+    mailersNeedingRevenueLog,
+    teamPendingReturns,
+    totalServers,
+    totalProxies,
+    totalSeedEmails,
+    totalRdps,
+    totalMailers,
+    totalTeams,
+    totalPendingUsers,
+    totalUsers, // Destructure added prop
+    totalTeamLeaders, // Destructure added prop
+  } = await getDashboardData()
+
   return (
     <DashboardClientContent
-      initialUser={data.initialUser}
-      allUsersForSimulator={data.allUsersForSimulator}
-      stats={data.stats}
+      currentUser={currentUser}
+      mailersNeedingRevenueLog={mailersNeedingRevenueLog}
+      teamPendingReturns={teamPendingReturns}
+      totalServers={totalServers}
+      totalProxies={totalProxies}
+      totalSeedEmails={totalSeedEmails}
+      totalRdps={totalRdps}
+      totalMailers={totalMailers}
+      totalTeams={totalTeams}
+      totalPendingUsers={totalPendingUsers}
+      totalUsers={totalUsers} // Pass added prop
+      totalTeamLeaders={totalTeamLeaders} // Pass added prop
     />
   )
 }
-
-// REMOVED local UserRole and Gender definitions:
-// export type UserRole = "admin" | "team-leader" | "mailer" | "user"
-// export type Gender = "male" | "female" | "other"

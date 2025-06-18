@@ -1,111 +1,91 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server"
-import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 import MailerResourcesClientPage from "./mailer-resources-client-page"
-import type { DailyRevenue, ProxyItem, Rdp, SeedEmail, Server, Team, User } from "@/lib/types"
-import type { CookieOptions } from "@supabase/ssr"
 
-export default async function MailerResourcesServerPage() {
-  const cookieStore = await cookies()
-
-  const supabase = createSupabaseServerClient({
-    get: (name: string) => {
-      return cookieStore.get(name)?.value
-    },
-    set: (name: string, value: string, options: CookieOptions) => {
-      try {
-        cookieStore.set({ name, value, ...options })
-      } catch (error) {
-        // Ignore error for Server Components
-      }
-    },
-    remove: (name: string, options: CookieOptions) => {
-      try {
-        cookieStore.set({ name, value: "", ...options })
-      } catch (error) {
-        // Ignore error for Server Components
-      }
-    },
-  })
+export default async function MailerResourcesPage() {
+  // Await the createSupabaseServerClient call
+  const supabase = await createSupabaseServerClient()
 
   const {
     data: { user },
+    error: authError,
   } = await supabase.auth.getUser()
 
-  if (!user) {
-    return redirect("/login")
+  if (authError || !user) {
+    redirect("/login")
   }
 
-  const { data: profileData, error: profileError } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("*, teams!fk_profiles_team_id(id, name)")
+    .select("*, teams(*)")
     .eq("id", user.id)
     .single()
 
-  const { data: allUsersForSimulator } = await supabase.from("profiles").select("*")
-
-  if (profileError || !profileData) {
-    console.error("Error fetching mailer profile:", profileError?.message)
-    const basicUser: User & { teams?: Team } = {
-      id: user.id,
-      email: user.email || "",
-      role: "pending_approval",
-      name: user.user_metadata?.full_name || user.email || "New User",
-      team_id: null,
-      created_at: user.created_at,
-      updated_at: user.updated_at || user.created_at,
-      avatar_url: user.user_metadata?.avatar_url,
-      username: user.user_metadata?.user_name,
-      teams: undefined,
+  if (profileError || !profile || profile.role !== "mailer" || !profile.team_id) {
+    // Redirect if not a mailer, or no profile/team_id
+    // The client component will handle the "Access Denied" message
+    // if the user is logged in but doesn't meet the role/team criteria.
+    // For now, we'll just pass the profile and let the client component decide.
+    // If no profile, it's a hard redirect to login.
+    if (!profile) {
+      redirect("/login")
     }
-    return (
-      <MailerResourcesClientPage
-        currentUser={basicUser}
-        allUsers={allUsersForSimulator || []}
-        initialServers={[]}
-        initialProxies={[]}
-        initialSeedEmails={[]}
-        initialRdps={[]}
-        dailyRevenues={[]}
-      />
-    )
   }
 
-  const typedProfile = profileData as User & { teams: Team }
+  const { data: servers, error: serversError } = await supabase
+    .from("servers")
+    .select("*")
+    .eq("user_id", user.id)
+    .order("entry_date", { ascending: false })
 
-  if (typedProfile.role !== "mailer" || !typedProfile.team_id) {
-    return (
-      <MailerResourcesClientPage
-        currentUser={typedProfile}
-        allUsers={allUsersForSimulator || []}
-        initialServers={[]}
-        initialProxies={[]}
-        initialSeedEmails={[]}
-        initialRdps={[]}
-        dailyRevenues={[]}
-      />
-    )
-  }
+  const { data: proxies, error: proxiesError } = await supabase
+    .from("proxies")
+    .select("*")
+    .eq("user_id", user.id)
+    .order("entry_date", { ascending: false })
 
-  const { data: serversData } = await supabase.from("servers").select("*").eq("added_by_mailer_id", user.id)
-  const { data: seedEmailsData } = await supabase.from("seed_emails").select("*").eq("added_by_mailer_id", user.id)
-  const { data: proxiesData } = await supabase.from("proxies").select("*").eq("added_by_mailer_id", user.id)
-  const { data: rdpsData } = await supabase.from("rdps").select("*").eq("added_by_mailer_id", user.id)
-  const { data: dailyRevenuesData } = await supabase
-    .from("daily_revenue")
+  const { data: seedEmails, error: seedEmailsError } = await supabase
+    .from("seed_emails")
+    .select("*")
+    .eq("user_id", user.id)
+    .order("entry_date", { ascending: false })
+
+  const { data: rdps, error: rdpsError } = await supabase
+    .from("rdps")
+    .select("*")
+    .eq("user_id", user.id)
+    .order("entry_date", { ascending: false })
+
+  const { data: dailyRevenues, error: dailyRevenuesError } = await supabase
+    .from("daily_revenues")
     .select("*")
     .eq("mailer_id", user.id)
     .order("date", { ascending: false })
 
+  const { data: allUsers, error: allUsersError } = await supabase.from("profiles").select("*")
+
+  if (serversError || proxiesError || seedEmailsError || rdpsError || dailyRevenuesError || allUsersError) {
+    console.error("Error fetching mailer resources:", {
+      serversError,
+      proxiesError,
+      seedEmailsError,
+      rdpsError,
+      dailyRevenuesError,
+      allUsersError,
+    })
+    // Handle error appropriately, maybe redirect to an error page or show a message
+    redirect("/dashboard") // Redirect to dashboard on data fetch error
+  }
+
   return (
     <MailerResourcesClientPage
-      currentUser={typedProfile}
-      allUsers={allUsersForSimulator || []}
-      initialServers={(serversData as Server[]) || []}
-      initialSeedEmails={(seedEmailsData as SeedEmail[]) || []}
-      initialProxies={(proxiesData as ProxyItem[]) || []}
-      initialRdps={(rdpsData as Rdp[]) || []}
-      dailyRevenues={(dailyRevenuesData as DailyRevenue[]) || []}
+      currentUser={profile!}
+      allUsers={allUsers || []}
+      initialServers={servers || []}
+      initialProxies={proxies || []}
+      initialSeedEmails={seedEmails || []}
+      initialRdps={rdps || []}
+      dailyRevenues={dailyRevenues || []}
     />
   )
 }

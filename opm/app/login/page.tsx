@@ -1,35 +1,11 @@
 import { LoginForm } from "@/components/auth/login-form"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
-import { cookies, headers as nextHeaders } from "next/headers" // Import nextHeaders
-import type { CookieOptions } from "@supabase/ssr" // Import for typing
+import { headers as nextHeaders } from "next/headers" // Import nextHeaders
 
 export default async function LoginPage() {
-  const cookieStore = await cookies()
-
-  const supabase = createSupabaseServerClient({
-    get(name: string) {
-      return cookieStore.get(name)?.value
-    },
-    set(name: string, value: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value, ...options })
-      } catch (error) {
-        // If you are using Next.js Middleware, this catch block can be
-        // safely ignored. It errors because the `set` method is not available
-        // in Server Components without a Middleware.
-      }
-    },
-    remove(name: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value: "", ...options })
-      } catch (error) {
-        // If you are using Next.js Middleware, this catch block can be
-        // safely ignored. It errors because the `delete` method is not available
-        // in Server Components without a Middleware.
-      }
-    },
-  })
+  // Await the createSupabaseServerClient call
+  const supabase = await createSupabaseServerClient()
 
   const {
     data: { session },
