@@ -3,31 +3,11 @@ import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 import type { User, Team } from "@/lib/types"
 import { AdminTeamsClientPage } from "./teams-client-page"
-import type { CookieOptions } from "@supabase/ssr"
 
 async function getTeamsAndUsers() {
-  const cookieStore = await cookies() // Added await here
-  const supabase = createSupabaseServerClient({
-    get(name: string) {
-      return cookieStore.get(name)?.value
-    },
-    set(name: string, value: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value, ...options })
-      } catch (error) {
-        // The `set` method is not available in Server Components.
-        // This can be ignored if you have middleware refreshing
-        // user sessions.
-      }
-    },
-    remove(name: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value: "", ...options })
-      } catch (error) {
-        // The `delete` method is not available in Server Components.
-      }
-    },
-  })
+  const cookieStore = await cookies()
+  // FIX: Call createSupabaseServerClient without arguments and await its result
+  const supabase = await createSupabaseServerClient()
 
   const {
     data: { user: authUser },

@@ -1,35 +1,16 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server"
-import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 import type { User } from "@/lib/types" // Assuming User has id, name, email, role
 import { UserApprovalClientPage } from "./user-approval-client-page"
-import type { CookieOptions } from "@supabase/ssr"
+// import type { CookieOptions } from "@supabase/ssr" // This import is no longer needed here
 
 export interface PendingUser extends User {
   created_at: string
 }
 
 async function getPendingUsers() {
-  const cookieStore = await cookies()
-  const supabase = createSupabaseServerClient({
-    get(name: string) {
-      return cookieStore.get(name)?.value
-    },
-    set(name: string, value: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value, ...options })
-      } catch (error) {
-        /* Ignored */
-      }
-    },
-    remove(name: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value: "", ...options })
-      } catch (error) {
-        /* Ignored */
-      }
-    },
-  })
+  // const cookieStore = await cookies() // No longer needed here as createSupabaseServerClient handles it
+  const supabase = await createSupabaseServerClient() // Call without arguments and await it
 
   const {
     data: { user: authUser },
