@@ -7,22 +7,23 @@ import { EditServerDialog } from "@/components/mailer/edit-server-dialog"
 import { EditProxyDialog } from "@/components/mailer/edit-proxy-dialog"
 import { EditSeedEmailDialog } from "@/components/mailer/edit-seed-email-dialog"
 import { EditRdpDialog } from "@/components/mailer/edit-rdp-dialog"
-import { DownloadSeedsDialog } from "@/components/mailer/download-seeds-dialog" // ADDED
+import { DownloadSeedsDialog } from "@/components/mailer/download-seeds-dialog"
+import { QuickAddRevenueDialog } from "@/components/mailer/quick-add-revenue-dialog"
+import { EditDailyRevenueDialog } from "@/components/mailer/edit-daily-revenue-dialog" // NEW IMPORT
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Building, Download } from "lucide-react" // ADDED Download icon
+import { Building, Download, DollarSign, Edit, Trash2 } from "lucide-react" // ADDED Edit, Trash2 icons
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { UserRoleSimulator, type UserRoleSimulatorProps } from "@/components/user-role-simulator"
 import Link from "next/link"
 import { toast } from "sonner"
-import { deleteServer, deleteProxy, deleteSeedEmail, deleteRdp, addDailyRevenue } from "./actions"
+import { deleteServer, deleteProxy, deleteSeedEmail, deleteRdp, addDailyRevenue, deleteDailyRevenue } from "./actions" // ADDED deleteDailyRevenue
 import { useActionState } from "react"
 import { DataTable } from "@/components/ui/data-table"
 import { getServerColumns, getProxyColumns, getSeedEmailColumns } from "./columns"
 import { RdpCard } from "./resource-cards"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { FilterX } from "lucide-react" // For a clear filter button
+import { FilterX } from "lucide-react"
 
 const getFormattedDate = (offsetDays = 0): string => {
   const date = new Date()
@@ -31,7 +32,7 @@ const getFormattedDate = (offsetDays = 0): string => {
 }
 
 interface MailerResourcesClientPageProps {
-  currentUser: User & { teams?: Team }
+  currentUser: User & { teams?: Team | null }
   allUsers: User[]
   initialServers: ServerType[]
   initialProxies: ProxyItem[]
@@ -40,7 +41,7 @@ interface MailerResourcesClientPageProps {
   dailyRevenues: DailyRevenue[]
 }
 
-type ResourceViewType = "servers" | "proxies" | "seed-emails" | "rdps"
+type ResourceViewType = "servers" | "proxies" | "seed-emails" | "rdps" | "daily-revenue" // ADDED daily-revenue
 
 type FormState<T = any> = {
   success?: string
@@ -69,13 +70,15 @@ export default function MailerResourcesClientPage({
   const [editingProxy, setEditingProxy] = useState<ProxyItem | null>(null)
   const [editingSeedEmail, setEditingSeedEmail] = useState<SeedEmail | null>(null)
   const [editingRdp, setEditingRdp] = useState<Rdp | null>(null)
+  const [editingDailyRevenue, setEditingDailyRevenue] = useState<DailyRevenue | null>(null) // NEW STATE
 
   const [activeResourceView, setActiveResourceView] = useState<ResourceViewType>("servers")
   const [seedEmailGroupNameFilter, setSeedEmailGroupNameFilter] = useState("")
-  const [isDownloadDialogOpen, setIsDownloadDialogOpen] = useState(false) // ADDED for dialog
-  const [selectedGroupNameFilter, setSelectedGroupNameFilter] = useState<string>("") // Renamed for clarity
+  const [isDownloadDialogOpen, setIsDownloadDialogOpen] = useState(false)
+  const [selectedGroupNameFilter, setSelectedGroupNameFilter] = useState<string>("")
+  const [isQuickAddRevenueDialogOpen, setIsQuickAddRevenueDialogOpen] = useState(false)
 
-  const [revenueDate, setRevenueDate] = useState(getFormattedDate(-1))
+  const [revenueDate, setRevenueDate] = useState(getFormattedDate(0))
   const addRevenueFormRef = useRef<HTMLFormElement>(null)
 
   const boundAddDailyRevenue = (prevState: FormState<DailyRevenue>, formData: FormData) =>
@@ -93,26 +96,35 @@ export default function MailerResourcesClientPage({
   useEffect(() => setRdps(initialRdps), [initialRdps])
   useEffect(() => setDailyRevenues(initialDailyRevenues), [initialDailyRevenues])
 
+  const handleRevenueLogged = (newRevenue: DailyRevenue) => {
+    setDailyRevenues((prev) => {
+      const existingIndex = prev.findIndex((r) => r.date === newRevenue.date && r.mailer_id === newRevenue.mailer_id)
+      if (existingIndex > -1) {
+        const updatedRevenues = [...prev]
+        updatedRevenues[existingIndex] = newRevenue
+        return updatedRevenues
+      }
+      return [...prev, newRevenue].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    })
+  }
+
+  const handleRevenueUpdated = (updatedRevenue: DailyRevenue) => {
+    setDailyRevenues((prev) =>
+      prev
+        .map((r) => (r.id === updatedRevenue.id ? updatedRevenue : r))
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+    )
+    setEditingDailyRevenue(null)
+  }
+
   useEffect(() => {
     if (revenueFormState.success) {
       toast.success(revenueFormState.success)
       if (revenueFormState.data) {
-        setDailyRevenues((prev) => {
-          const existingIndex = prev.findIndex(
-            (r) => r.date === revenueFormState.data!.date && r.mailer_id === revenueFormState.data!.mailer_id,
-          )
-          if (existingIndex > -1) {
-            const updatedRevenues = [...prev]
-            updatedRevenues[existingIndex] = revenueFormState.data!
-            return updatedRevenues
-          }
-          return [...prev, revenueFormState.data!].sort(
-            (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-          )
-        })
+        handleRevenueLogged(revenueFormState.data)
       }
       addRevenueFormRef.current?.reset()
-      setRevenueDate(getFormattedDate(-1))
+      setRevenueDate(getFormattedDate(0))
     }
     if (revenueFormState.error) toast.error("Revenue Error", { description: revenueFormState.error })
   }, [revenueFormState])
@@ -135,6 +147,10 @@ export default function MailerResourcesClientPage({
       } else if (type === "rdps") {
         result = await deleteRdp(id)
         if (result.success) setRdps((prev) => prev.filter((r) => r.id !== id))
+      } else if (type === "daily-revenue") {
+        // NEW: Handle daily revenue deletion
+        result = await deleteDailyRevenue(id)
+        if (result.success) setDailyRevenues((prev) => prev.filter((rev) => rev.id !== id))
       }
 
       if (result?.success) toast.success(result.success)
@@ -153,11 +169,10 @@ export default function MailerResourcesClientPage({
 
   const filteredSeedEmailsByGroupName = useMemo(() => {
     if (!selectedGroupNameFilter) {
-      // Use the new state variable
       return seedEmails
     }
-    return seedEmails.filter((email) => email.group_name === selectedGroupNameFilter) // Exact match for select
-  }, [seedEmails, selectedGroupNameFilter]) // Use the new state variable
+    return seedEmails.filter((email) => email.group_name === selectedGroupNameFilter)
+  }, [seedEmails, selectedGroupNameFilter])
 
   const availableGroupNamesForDownload = useMemo(
     () => Array.from(new Set(seedEmails.map((s) => s.group_name).filter(Boolean) as string[])).sort(),
@@ -170,7 +185,6 @@ export default function MailerResourcesClientPage({
   }, [seedEmails])
 
   const existingGroupNamesForFilter = useMemo(() => {
-    // Renamed for clarity
     const groupNames = new Set(seedEmails.map((s) => s.group_name).filter(Boolean) as string[])
     return Array.from(groupNames).sort()
   }, [seedEmails])
@@ -205,13 +219,7 @@ export default function MailerResourcesClientPage({
         </Button>
       </div>
     )
-  }, [selectedGroupNameFilter, existingGroupNamesForFilter]) // Dependencies updated
-
-  const handleUserChangeForSimulator: UserRoleSimulatorProps["onUserChange"] = (newUserId) => {
-    const newUrl = new URL(window.location.href)
-    newUrl.searchParams.set("simulated_user_id", newUserId)
-    window.location.href = newUrl.toString()
-  }
+  }, [selectedGroupNameFilter, existingGroupNamesForFilter])
 
   if (currentUser.role !== "mailer" || !currentUser.team_id) {
     return (
@@ -228,11 +236,6 @@ export default function MailerResourcesClientPage({
           <Button variant="outline" asChild className="mt-6">
             <Link href="/dashboard">Go to Dashboard</Link>
           </Button>
-          <UserRoleSimulator
-            currentUser={currentUser}
-            allUsers={allUsers}
-            onUserChange={handleUserChangeForSimulator}
-          />
         </div>
       </div>
     )
@@ -244,13 +247,17 @@ export default function MailerResourcesClientPage({
         <h1 className="text-3xl font-bold tracking-tight">
           Mailer Resources (Team: {currentUser.teams?.name || "N/A"})
         </h1>
-        <Button variant="outline" asChild>
-          <Link href="/dashboard">
-            <Building className="mr-2 h-4 w-4" /> Dashboard
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setIsQuickAddRevenueDialogOpen(true)}>
+            <DollarSign className="mr-2 h-4 w-4" /> Quick Log Revenue
+          </Button>
+          <Button variant="outline" asChild>
+            <Link href="/dashboard">
+              <Building className="mr-2 h-4 w-4" /> Dashboard
+            </Link>
+          </Button>
+        </div>
       </div>
-      <UserRoleSimulator currentUser={currentUser} allUsers={allUsers} onUserChange={handleUserChangeForSimulator} />
 
       <BulkImport currentUser={currentUser} existingGroupNames={existingGroupNames} />
 
@@ -354,13 +361,26 @@ export default function MailerResourcesClientPage({
                   <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {dailyRevenues.map((rev) => (
-                    <TableRow key={`${rev.mailer_id}-${rev.date}`}>
+                    <TableRow key={rev.id}>
                       <TableCell>{new Date(rev.date).toLocaleDateString()}</TableCell>
                       <TableCell className="text-right">${rev.amount.toFixed(2)}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button variant="ghost" size="icon" onClick={() => setEditingDailyRevenue(rev)}>
+                            <Edit className="h-4 w-4" />
+                            <span className="sr-only">Edit revenue</span>
+                          </Button>
+                          <Button variant="ghost" size="icon" onClick={() => handleDelete("daily-revenue", rev.id)}>
+                            <Trash2 className="h-4 w-4 text-red-500" />
+                            <span className="sr-only">Delete revenue</span>
+                          </Button>
+                        </div>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -416,14 +436,29 @@ export default function MailerResourcesClientPage({
           }}
         />
       )}
-      {/* ADDED Download Dialog */}
       <DownloadSeedsDialog
         isOpen={isDownloadDialogOpen}
         onOpenChange={setIsDownloadDialogOpen}
         allSeedEmails={seedEmails}
-        currentFilteredSeedEmails={filteredSeedEmailsByGroupName} // Pass the already group-filtered list
+        currentFilteredSeedEmails={filteredSeedEmailsByGroupName}
         availableGroupNames={availableGroupNamesForDownload}
       />
+      <QuickAddRevenueDialog
+        isOpen={isQuickAddRevenueDialogOpen}
+        onOpenChange={setIsQuickAddRevenueDialogOpen}
+        mailerId={currentUser.id}
+        teamId={currentUser.team_id!}
+        onRevenueLogged={handleRevenueLogged}
+      />
+      {/* NEW Edit Daily Revenue Dialog */}
+      {editingDailyRevenue && (
+        <EditDailyRevenueDialog
+          dailyRevenue={editingDailyRevenue}
+          isOpen={!!editingDailyRevenue}
+          onOpenChange={(isOpen) => !isOpen && setEditingDailyRevenue(null)}
+          onRevenueUpdated={handleRevenueUpdated}
+        />
+      )}
     </div>
   )
 }

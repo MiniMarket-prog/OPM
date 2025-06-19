@@ -6,8 +6,8 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/com
 import { ServerIcon, ShieldCheck, MonitorPlay, RotateCcw, Building, CheckCircle, XCircle } from "lucide-react"
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
-import { approveServerReturn, rejectServerReturn } from "./actions" // Corrected import names
-import { useToast } from "@/hooks/use-toast" // Corrected: Import useToast hook
+import { approveServerReturn, rejectServerReturn } from "./actions"
+import { useToast } from "@/hooks/use-toast"
 import { useState, useEffect } from "react"
 
 interface ResourceItemProps {
@@ -28,8 +28,8 @@ function ResourceReturnItem({ item, type, onReturn, onAcceptReturn, onRejectRetu
     name = `${(item as Rdp).ip_address} (${(item as Rdp).username})`
   }
 
-  // Assuming useMockDB is still used for finding mailer details if not passed via props
-  const mailer = useMockDB()[0].users.find((u: User) => u.id === item.added_by_mailer_id)
+  // CRITICAL CHANGE: Access mailer name directly from the single profiles object
+  const mailerName = item.profiles?.full_name || item.profiles?.name || item.profiles?.username || "Unknown"
 
   const isServerPendingApproval = type === "Server" && item.status === "pending_return_approval"
   const isReturned = item.status === "returned"
@@ -39,7 +39,7 @@ function ResourceReturnItem({ item, type, onReturn, onAcceptReturn, onRejectRetu
       <div>
         <p className="font-medium">{name}</p>
         <p className="text-xs text-muted-foreground">
-          Type: {type} | Added by: {mailer?.full_name || "Unknown"} {/* Use full_name */}
+          Type: {type} | Added by: {mailerName}
         </p>
         <p className="text-xs text-muted-foreground">
           Current Status:{" "}
@@ -67,10 +67,24 @@ function ResourceReturnItem({ item, type, onReturn, onAcceptReturn, onRejectRetu
       </div>
       {type === "Server" && isServerPendingApproval && (
         <div className="flex gap-2">
-          <Button variant="default" size="sm" onClick={() => onAcceptReturn?.(item.id)}>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => {
+              console.log("Accept button clicked for ID:", item.id)
+              onAcceptReturn?.(item.id)
+            }}
+          >
             <CheckCircle className="mr-2 h-4 w-4" /> Accept
           </Button>
-          <Button variant="destructive" size="sm" onClick={() => onRejectReturn?.(item.id)}>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => {
+              console.log("Reject button clicked for ID:", item.id)
+              onRejectReturn?.(item.id)
+            }}
+          >
             <XCircle className="mr-2 h-4 w-4" /> Reject
           </Button>
         </div>
@@ -90,7 +104,7 @@ function ResourceReturnItem({ item, type, onReturn, onAcceptReturn, onRejectRetu
 }
 
 interface TLReturnsClientPageProps {
-  currentUser: User & { teams: Team | null } // Ensure teams is part of currentUser
+  currentUser: User & { teams: Team | null }
   initialServers: ServerType[]
   initialProxies: ProxyItem[]
   initialRdps: Rdp[]
@@ -102,8 +116,7 @@ export default function TLReturnsClientPage({
   initialProxies,
   initialRdps,
 }: TLReturnsClientPageProps) {
-  // useMockDB is still here for update functions, but data is now from props
-  const [db, { updateProxyStatus, updateRdpStatus }] = useMockDB()
+  const [db, { updateProxyStatus, updateRdpStatus }] = useMockDB() // Keep for mock data if still used elsewhere
   const { toast } = useToast()
 
   // Local state to manage servers after actions
@@ -125,7 +138,6 @@ export default function TLReturnsClientPage({
     )
   }
 
-  // Use the team from currentUser.teams if available, otherwise try to find from mock DB
   const currentTeam = currentUser.teams || db.teams.find((t: Team) => t.id === currentUser.team_id)
 
   const handleReturnResource = (id: string, type: "Server" | "Proxy" | "RDP") => {
@@ -139,22 +151,42 @@ export default function TLReturnsClientPage({
   }
 
   const handleAcceptServerReturn = async (serverId: string) => {
-    const result: ActionResult<ServerType> = await approveServerReturn(serverId)
-    if (result.success) {
-      toast({ title: result.message }) // Use result.message
-      setServers((prev) => prev.map((s) => (s.id === serverId ? { ...s, status: "returned" } : s)))
-    } else {
-      toast({ title: "Error", description: result.message, variant: "destructive" }) // Use result.message
+    console.log("Attempting to accept server return for ID:", serverId)
+    try {
+      const result: ActionResult<ServerType> = await approveServerReturn(serverId)
+      if (result.success) {
+        toast({ title: result.message })
+        // Optimistically update the status in local state
+        setServers((prev) => prev.map((s) => (s.id === serverId ? { ...s, status: "returned" } : s)))
+        console.log("Server accepted successfully. New server state:", servers.find((s) => s.id === serverId)?.status)
+      } else {
+        toast({ title: "Error", description: result.message, variant: "destructive" })
+        console.error("Server action failed:", result.message)
+        // If action failed, re-fetch or revert state if necessary (revalidatePath should handle this)
+      }
+    } catch (error) {
+      console.error("Client-side error calling approveServerReturn:", error)
+      toast({ title: "Error", description: "An unexpected error occurred.", variant: "destructive" })
     }
   }
 
   const handleRejectServerReturn = async (serverId: string) => {
-    const result: ActionResult<ServerType> = await rejectServerReturn(serverId)
-    if (result.success) {
-      toast({ title: result.message }) // Use result.message
-      setServers((prev) => prev.map((s) => (s.id === serverId ? { ...s, status: "active" } : s)))
-    } else {
-      toast({ title: "Error", description: result.message, variant: "destructive" }) // Use result.message
+    console.log("Attempting to reject server return for ID:", serverId)
+    try {
+      const result: ActionResult<ServerType> = await rejectServerReturn(serverId)
+      if (result.success) {
+        toast({ title: result.message })
+        // Optimistically update the status in local state
+        setServers((prev) => prev.map((s) => (s.id === serverId ? { ...s, status: "active" } : s)))
+        console.log("Server rejected successfully. New server state:", servers.find((s) => s.id === serverId)?.status)
+      } else {
+        toast({ title: "Error", description: result.message, variant: "destructive" })
+        console.error("Server action failed:", result.message)
+        // If action failed, re-fetch or revert state if necessary (revalidatePath should handle this)
+      }
+    } catch (error) {
+      console.error("Client-side error calling rejectServerReturn:", error)
+      toast({ title: "Error", description: "An unexpected error occurred.", variant: "destructive" })
     }
   }
 

@@ -1,40 +1,21 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server"
-import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 import type { User } from "@/lib/types"
 import { IpWhitelistClientPage } from "./ip-whitelist-client-page"
-import type { CookieOptions } from "@supabase/ssr"
+// Removed CookieOptions import as it's no longer needed here
 
 export interface AllowedIp {
   id: string
   ip_address: string
   description?: string | null
-  created_at: string
+  created_at: string | null // This was already corrected, keeping it.
   added_by_admin_id?: string | null
   admin_name?: string | null // For display
 }
 
 async function getIpWhitelistData() {
-  const cookieStore = await cookies()
-  const supabase = createSupabaseServerClient({
-    get(name: string) {
-      return cookieStore.get(name)?.value
-    },
-    set(name: string, value: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value, ...options })
-      } catch (error) {
-        /* Middleware handling */
-      }
-    },
-    remove(name: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value: "", ...options })
-      } catch (error) {
-        /* Middleware handling */
-      }
-    },
-  })
+  // Await the Supabase client creation, and call without arguments
+  const supabase = await createSupabaseServerClient()
 
   const {
     data: { user: authUser },
@@ -72,14 +53,8 @@ async function getIpWhitelistData() {
   }
 
   const allowedIps: AllowedIp[] = (ipsData || []).map((item: any) => {
-    // Using any for item to ensure type compatibility for item.profiles
     let adminName = "Unknown Admin"
-    // Check if item.profiles exists and is an array with at least one element
-    if (item.profiles && Array.isArray(item.profiles) && item.profiles.length > 0) {
-      adminName = item.profiles[0]?.name || "Unknown Admin"
-    }
-    // Fallback for if item.profiles is an object (which is expected for many-to-one)
-    else if (item.profiles && typeof item.profiles === "object" && !Array.isArray(item.profiles)) {
+    if (item.profiles && typeof item.profiles === "object" && !Array.isArray(item.profiles)) {
       adminName = (item.profiles as { name?: string | null })?.name || "Unknown Admin"
     }
 
@@ -89,7 +64,7 @@ async function getIpWhitelistData() {
       description: item.description,
       created_at: item.created_at,
       added_by_admin_id: item.added_by_admin_id,
-      admin_name: adminName, // Use the resolved adminName
+      admin_name: adminName,
     }
   })
 

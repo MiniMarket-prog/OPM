@@ -5,34 +5,43 @@ export type Gender = "male" | "female" | "other" | "prefer_not_to_say"
 
 export type User = {
   id: string
-  name: string // This is the application-level display name (can be full_name or username).
+  name: string | null // Changed to allow null
   email?: string | null
-  role: UserRole
+  role: string | null // CRITICAL CHANGE: Allow role to be string | null to match Supabase
   team_id?: string | null
   avatar_url?: string | null
-  username?: string | null
-  full_name?: string | null // Added full_name
+  username?: string | null // Changed to allow null
+  full_name?: string | null
   isp_focus?: string[] | null
   entry_date?: string | null
   age?: number | null
   address?: string | null
   phone?: string | null
   actual_salary?: number | null
-  gender?: Gender | null // Ensure this is Gender type
-  teams?: Team | null // Added teams relation to User type
-  created_at?: string | null // Changed to allow null
-  updated_at?: string | null // Changed to allow null
+  gender?: string | null // CRITICAL CHANGE: Allow gender to be string | null
+  teams?: Team | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export type Team = Database["public"]["Tables"]["teams"]["Row"]
 
-export type Server = Database["public"]["Tables"]["servers"]["Row"]
+// Extend Server, ProxyItem, and Rdp to include the joined profile data
+export type Server = Database["public"]["Tables"]["servers"]["Row"] & {
+  profiles?: { full_name: string | null; name: string | null; username: string | null } | null // CRITICAL CHANGE: Added name and username
+}
 
-export type ProxyItem = Database["public"]["Tables"]["proxies"]["Row"]
+export type ProxyItem = Database["public"]["Tables"]["proxies"]["Row"] & {
+  profiles?: { full_name: string | null; name: string | null; username: string | null } | null // CRITICAL CHANGE: Added name and username
+}
 
-export type SeedEmail = Database["public"]["Tables"]["seed_emails"]["Row"]
+export type SeedEmail = Database["public"]["Tables"]["seed_emails"]["Row"] & {
+  profiles?: { full_name: string | null; name: string | null; username: string | null } | null // CRITICAL CHANGE: Added name and username
+}
 
-export type Rdp = Database["public"]["Tables"]["rdps"]["Row"]
+export type Rdp = Database["public"]["Tables"]["rdps"]["Row"] & {
+  profiles?: { full_name: string | null; name: string | null; username: string | null } | null // CRITICAL CHANGE: Added name and username
+}
 
 export type DailyRevenue = Database["public"]["Tables"]["daily_revenues"]["Row"]
 
@@ -50,7 +59,7 @@ export type ResourceReturnItem = {
   status: string
   user_id: string | null
   connection_info?: string | null
-  profiles?: { full_name: string | null }[] | null // Changed to array of profiles
+  profiles?: { full_name: string | null }[] | null // This type is for the specific ResourceReturnItem, not the joined data from the DB
 }
 
 export interface MockDB {

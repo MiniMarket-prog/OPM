@@ -5,6 +5,8 @@ import { redirect } from "next/navigation"
 import MailerProfileClientPage from "./mailer-profile-client-page"
 import type { User as UserAppType, Gender as UserGender } from "@/lib/types"
 import type { Database } from "@/lib/database.types"
+// Import SupabaseClient type directly
+import type { SupabaseClient } from "@supabase/supabase-js"
 
 export interface MailerProfileData extends UserAppType {
   team_name: string | null
@@ -23,7 +25,8 @@ type RawUserForSimulator = Omit<Database["public"]["Tables"]["profiles"]["Row"],
 }
 
 async function getAllUsersForSimulator(
-  supabase: ReturnType<typeof createSupabaseServerClient>,
+  // CORRECTED TYPE: Use direct SupabaseClient<Database> type
+  supabase: SupabaseClient<Database>,
 ): Promise<UserAppType[]> {
   // Use the explicit relationship hint provided by Supabase
   const { data: users, error } = await supabase.from("profiles").select("*, teams!fk_profiles_team_id(id, name)") // Using the explicit hint
@@ -56,7 +59,8 @@ async function getAllUsersForSimulator(
 
 export default async function MailerProfileServerPage() {
   const cookieStore = await cookies()
-  const supabase = createSupabaseServerClient({
+  // AWAIT the supabase client creation
+  const supabase = await createSupabaseServerClient({
     get: (name: string) => cookieStore.get(name)?.value,
     set: (name: string, value: string, options: any) => {
       cookieStore.set(name, value, options)
@@ -93,6 +97,7 @@ export default async function MailerProfileServerPage() {
     redirect("/dashboard?error=Access Denied. Mailer role required.")
   }
 
+  // AWAIT the getAllUsersForSimulator call
   const allUsersForSimulator = await getAllUsersForSimulator(supabase)
 
   const initialProfileData: MailerProfileData = {

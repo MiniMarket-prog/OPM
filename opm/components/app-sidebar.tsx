@@ -13,7 +13,7 @@ import {
   SidebarMenuButton,
   SidebarSeparator,
   useSidebar,
-} from "@/components/ui/sidebar" // Assuming sidebar components are in this path
+} from "@/components/ui/sidebar"
 import {
   LayoutDashboard,
   Users,
@@ -28,13 +28,11 @@ import {
   LogOut,
 } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { useMockDB } from "@/lib/mock-data-store" // For user info, replace with actual auth context if available
-import type { User } from "@/lib/types"
-import { signOut as logout } from "@/app/auth/actions" // Corrected import
+import type { User, UserRole } from "@/lib/types" // Ensure UserRole is imported
+import { signOut as logout } from "@/app/auth/actions"
 
 // Define navigation items based on roles
-// In a real app, you'd fetch the current user's role from an auth context
-const navItemsByRole = (role?: User["role"]) => {
+const navItemsByRole = (roleParam?: string | null) => {
   const allItems = [
     {
       groupLabel: "General",
@@ -50,6 +48,7 @@ const navItemsByRole = (role?: User["role"]) => {
         { title: "Statistics", href: "/admin/stats", icon: BarChart3, roles: ["admin"] },
         { title: "IP Whitelist", href: "/admin/ip-whitelist", icon: ShieldCheck, roles: ["admin"] },
         { title: "User Approval", href: "/admin/user-approval", icon: UserCheck, roles: ["admin"] },
+        { title: "Server Returns", href: "/admin/returns", icon: RotateCcw, roles: ["admin"] },
       ],
     },
     {
@@ -58,7 +57,7 @@ const navItemsByRole = (role?: User["role"]) => {
       items: [
         { title: "Manage Mailers", href: "/team-leader/mailers", icon: UserPlus, roles: ["team-leader"] },
         { title: "Resource Returns", href: "/team-leader/returns", icon: RotateCcw, roles: ["team-leader"] },
-        { title: "My Profile", href: "/team-leader/profile", icon: UserCircle, roles: ["team-leader"] }, // Add this line
+        { title: "My Profile", href: "/team-leader/profile", icon: UserCircle, roles: ["team-leader"] },
       ],
     },
     {
@@ -72,40 +71,52 @@ const navItemsByRole = (role?: User["role"]) => {
     {
       groupLabel: "Development",
       items: [
-        { title: "Example UI", href: "/example-ui-usage", icon: Palette, roles: ["admin", "team-leader", "mailer"] }, // Or all roles for dev
+        { title: "Example UI", href: "/example-ui-usage", icon: Palette, roles: ["admin", "team-leader", "mailer"] },
       ],
     },
   ]
 
-  if (!role) return allItems // Show all if no role (e.g. during loading or error)
+  if (!roleParam) return [] // If no role (null or undefined), return empty array
+
+  // Define a list of valid UserRole strings
+  const validRoles: UserRole[] = ["admin", "team-leader", "mailer", "pending_approval"]
+
+  // Check if roleParam is a valid UserRole string. If not, treat as no role.
+  const actualRole: UserRole | undefined = validRoles.includes(roleParam as UserRole)
+    ? (roleParam as UserRole)
+    : undefined
+
+  if (!actualRole) return [] // If role is not a valid UserRole string, return empty array
 
   return allItems
     .map((group) => {
       // Filter group if group.roles is defined and current role is not included
-      if (group.roles && !group.roles.includes(role)) {
+      if (group.roles && !group.roles.includes(actualRole)) {
         return null
       }
       // Filter items within the group
-      const filteredItems = group.items.filter((item) => item.roles.includes(role))
+      const filteredItems = group.items.filter((item) => item.roles.includes(actualRole))
       if (filteredItems.length === 0) {
         return null // Don't show group if no items are visible for this role
       }
       return { ...group, items: filteredItems }
     })
-    .filter(Boolean) as typeof allItems // Type assertion after filtering nulls
+    .filter(Boolean) as typeof allItems
 }
 
-export function AppSidebar() {
+// Define props for AppSidebar
+interface AppSidebarProps {
+  currentUser: User
+}
+
+export function AppSidebar({ currentUser }: AppSidebarProps) {
   const pathname = usePathname()
   const { state: sidebarState } = useSidebar()
 
-  // TODO: Replace with actual user data from your auth context/hook
-  // For now, using a mock user or assuming admin for full visibility
-  const [db] = useMockDB()
-  const mockCurrentUser = db.users.find((u) => u.role === "admin") || (db.users[0] as User | undefined)
-  const currentUserRole = mockCurrentUser?.role
+  // Use the actual current user's role
+  const currentUserRole = currentUser?.role
 
-  const getInitials = (name?: string): string => {
+  const getInitials = (name?: string | null): string => {
     if (!name) return "U"
     return name
       .split(" ")
@@ -152,16 +163,14 @@ export function AppSidebar() {
         ))}
       </SidebarContent>
       <SidebarFooter>
-        {" "}
-        {/* Removed p-2, ui/sidebar.tsx now handles padding */}
         <SidebarMenu>
           <SidebarMenuItem>
             <form action={logout} className="w-full">
               <SidebarMenuButton
                 className="w-full"
                 tooltip={sidebarState === "collapsed" ? "Logout" : undefined}
-                asChild={false} // Important: SidebarMenuButton will be the button
-                type="submit" // Make the SidebarMenuButton act as submit
+                asChild={false}
+                type="submit"
               >
                 <LogOut className="h-4 w-4" />
                 <span>Logout</span>

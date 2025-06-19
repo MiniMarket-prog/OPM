@@ -1,6 +1,4 @@
 "use server"
-
-import { cookies } from "next/headers"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
@@ -28,16 +26,7 @@ const ProfileUpdateSchema = z.object({
 })
 
 export async function updateMailerProfile(formData: FormData) {
-  const cookieStore = await cookies()
-  const supabase = createSupabaseServerClient({
-    get: (name: string) => cookieStore.get(name)?.value,
-    set: (name: string, value: string, options: any) => {
-      cookieStore.set(name, value, options)
-    },
-    remove: (name: string, options: any) => {
-      cookieStore.delete({ name, ...options })
-    },
-  })
+  const supabase = await createSupabaseServerClient()
 
   const {
     data: { user },
@@ -77,6 +66,8 @@ export async function updateMailerProfile(formData: FormData) {
   if (validatedData.name !== undefined) {
     // @ts-ignore - assuming 'name' is correct, or adjust if type is more specific
     profileUpdateData.name = validatedData.name === "" ? null : validatedData.name
+    // CRITICAL CHANGE: Also update full_name when name is updated
+    profileUpdateData.full_name = validatedData.name === "" ? null : validatedData.name
   }
   if (validatedData.avatar_url !== undefined) {
     profileUpdateData.avatar_url = validatedData.avatar_url === "" ? null : validatedData.avatar_url

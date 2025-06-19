@@ -2,8 +2,6 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { revalidatePath } from "next/cache"
-import { cookies } from "next/headers"
-import type { CookieOptions } from "@supabase/ssr"
 import type { AllowedIp } from "./page" // Import the interface
 
 export async function addAllowedIp(formData: FormData) {
@@ -21,26 +19,8 @@ export async function addAllowedIp(formData: FormData) {
     return { error: "Invalid IP Address format. Please use IPv4 format (e.g., 192.168.1.1)." }
   }
 
-  const cookieStore = await cookies()
-  const supabase = createSupabaseServerClient({
-    get(name: string) {
-      return cookieStore.get(name)?.value
-    },
-    set(name: string, value: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value, ...options })
-      } catch (error) {
-        /* Ignored */
-      }
-    },
-    remove(name: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value: "", ...options })
-      } catch (error) {
-        /* Ignored */
-      }
-    },
-  })
+  // Await the Supabase client creation
+  const supabase = await createSupabaseServerClient()
 
   const {
     data: { user },
@@ -96,26 +76,8 @@ export async function deleteAllowedIp(ipId: string) {
     return { error: "IP ID is required." }
   }
 
-  const cookieStore = await cookies()
-  const supabase = createSupabaseServerClient({
-    get(name: string) {
-      return cookieStore.get(name)?.value
-    },
-    set(name: string, value: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value, ...options })
-      } catch (error) {
-        /* Ignored */
-      }
-    },
-    remove(name: string, options: CookieOptions) {
-      try {
-        cookieStore.set({ name, value: "", ...options })
-      } catch (error) {
-        /* Ignored */
-      }
-    },
-  })
+  // Await the Supabase client creation
+  const supabase = await createSupabaseServerClient()
 
   const {
     data: { user },

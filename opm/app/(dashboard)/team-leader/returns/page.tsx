@@ -1,65 +1,68 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
 import TLReturnsClientPage from "./returns-client-page"
-import type { Server, ProxyItem, Rdp, User, Team } from "@/lib/types"
+import type { User, Team } from "@/lib/types" // Import User and Team types
 
-export default async function TeamLeaderReturnsServerPage() {
-  const supabase = await createSupabaseServerClient() // Await the async function
+export default async function TLReturnsPage() {
+  const supabase = await createSupabaseServerClient()
 
   const {
     data: { user },
+    error: authError,
   } = await supabase.auth.getUser()
 
-  if (!user) {
-    return redirect("/login")
+  if (authError || !user) {
+    redirect("/login")
   }
 
-  const { data: profileData, error: profileError } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("*, teams!fk_profiles_team_id(id, name)")
+    .select("*, teams!fk_profiles_team_id(*)")
     .eq("id", user.id)
     .single()
 
-  if (profileError || !profileData) {
-    console.error("Error fetching Team Leader profile:", profileError?.message)
-    return redirect("/dashboard") // Redirect if profile not found or error
+  if (profileError || !profile || profile.role !== "team-leader" || !profile.team_id) {
+    if (!profile) {
+      redirect("/login")
+    }
+    redirect("/dashboard")
   }
 
-  const typedProfile = profileData as User & { teams: Team }
-
-  // Ensure user is a team-leader and has a team_id
-  if (typedProfile.role !== "team-leader" || !typedProfile.team_id) {
-    console.log(
-      `User ${typedProfile.id} is not a team-leader or has no team_id. Role: ${typedProfile.role}, Team ID: ${typedProfile.team_id}`,
-    )
-    return redirect("/dashboard")
-  }
-
-  // Fetch servers, proxies, and RDPs for the team leader's team
-  const { data: teamServers } = await supabase
+  // Fetch servers, proxies, and RDPs, joining with profiles to get mailer names
+  const { data: servers, error: serversError } = await supabase
     .from("servers")
-    .select("*")
-    .eq("team_id", typedProfile.team_id)
-    .in("status", ["active", "maintenance", "problem", "returned", "pending_return_approval"]) // Include all relevant statuses
+    .select("*, profiles!servers_added_by_mailer_id_fkey(full_name, name, username)") // Join to get mailer's full_name, name, username
+    .eq("team_id", profile.team_id)
+    .order("entry_date", { ascending: false })
 
-  const { data: teamProxies } = await supabase
+  const { data: proxies, error: proxiesError } = await supabase
     .from("proxies")
-    .select("*")
-    .eq("team_id", typedProfile.team_id)
-    .in("status", ["active", "maintenance", "problem", "returned"])
+    .select("*, profiles!proxies_added_by_mailer_id_fkey(full_name, name, username)") // Join to get mailer's full_name, name, username
+    .eq("team_id", profile.team_id)
+    .order("entry_date", { ascending: false })
 
-  const { data: teamRdps } = await supabase
+  const { data: rdps, error: rdpsError } = await supabase
     .from("rdps")
-    .select("*")
-    .eq("team_id", typedProfile.team_id)
-    .in("status", ["active", "maintenance", "problem", "returned"])
+    .select("*, profiles!rdps_added_by_mailer_id_fkey(full_name, name, username)") // Join to get mailer's full_name, name, username
+    .eq("team_id", profile.team_id)
+    .order("entry_date", { ascending: false })
+
+  if (serversError || proxiesError || rdpsError) {
+    console.error("Error fetching team leader resources:", {
+      serversError,
+      proxiesError,
+      rdpsError,
+    })
+    // Redirect to dashboard or show an error message
+    redirect("/dashboard")
+  }
 
   return (
     <TLReturnsClientPage
-      currentUser={typedProfile}
-      initialServers={(teamServers as Server[]) || []}
-      initialProxies={(teamProxies as ProxyItem[]) || []}
-      initialRdps={(teamRdps as Rdp[]) || []}
+      currentUser={profile as User & { teams: Team | null }} // Cast to ensure correct type for client component
+      initialServers={servers || []}
+      initialProxies={proxies || []}
+      initialRdps={rdps || []}
     />
   )
 }

@@ -1,8 +1,6 @@
-import { MainNav } from "@/components/main-nav"
 import { UserNav } from "@/components/user-nav"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
-import type { UserRole } from "@/lib/types"
 
 export default async function Header() {
   const supabase = await createSupabaseServerClient()
@@ -15,9 +13,10 @@ export default async function Header() {
     redirect("/login")
   }
 
+  // CRITICAL CHANGE: Select all profile fields to ensure compatibility with UserNav's expected props
   const { data: profile } = await supabase
     .from("profiles")
-    .select("id, username, full_name, avatar_url, role, email")
+    .select("*") // Changed from select("id, username, full_name, avatar_url, role, email")
     .eq("id", user.id)
     .single()
 
@@ -26,14 +25,16 @@ export default async function Header() {
     redirect("/login")
   }
 
-  const userRole: UserRole = profile.role as UserRole
+  // userRole is still determined but not passed to MainNav as it's removed
+  // const userRole: UserRole = profile.role as UserRole; // This line can be removed if UserRole is not used elsewhere in this file
 
   return (
     <header className="sticky top-0 z-30 border-b bg-background">
       <div className="flex h-16 items-center px-4">
-        <MainNav className="mx-6" userRole={userRole} /> {/* Pass userRole here */}
+        {/* MainNav component removed as per previous request */}
         <div className="ml-auto flex items-center space-x-4">
-          <UserNav user={user} profile={profile} /> {/* Pass the full profile */}
+          {/* Pass the full profile object to UserNav */}
+          <UserNav user={user} profile={profile} />
         </div>
       </div>
     </header>
